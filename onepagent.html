@@ -4003,11 +4003,9 @@ async function _buildLocalState() {
   for (const c of convMeta) {
     const d = await loadConvDataFromDB(c.id);
     if (!d) continue;
-    // chatHTML is a render cache — drop it to save bandwidth; rebuilt on switchConversation.
-    const { chatHTML, ...rest } = d;
-    // Extract binary bytes from vfs tree into blob refs.
-    const vfsRefs = await _extractBlobs(rest.vfs, blobs);
-    const convObj = { ...rest, vfs: vfsRefs };
+    // Extract binary bytes from vfs tree into blob refs; keep chatHTML so switchConversation can restore the rendered view.
+    const vfsRefs = await _extractBlobs(d.vfs, blobs);
+    const convObj = { ...d, vfs: vfsRefs };
     const jsonStr = JSON.stringify(convObj);
     const hash = await _hashString(jsonStr);
     objects.set(hash, jsonStr);
