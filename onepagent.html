@@ -937,9 +937,10 @@ document.addEventListener('DOMContentLoaded', function() {
       <button class="top-btn hide-mobile" onclick="downloadAll()">Export</button>
       <span style="position:relative;display:inline-block">
         <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket">&#x2601; Sync</button>
-        <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:180px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
-          <button class="top-btn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; Push now</button>
-          <button class="top-btn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; Pull now</button>
+        <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:240px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
+          <button class="top-btn" id="syncPushBtn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; Push now</button>
+          <button class="top-btn" id="syncPullBtn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; Pull now</button>
+          <div id="syncProgress" style="display:none;padding:4px 6px;border-top:1px solid var(--border);margin-top:4px"></div>
           <div id="syncStatus" style="font-size:10px;color:var(--text-dim);padding:4px 6px;border-top:1px solid var(--border);margin-top:4px">Not configured.</div>
         </div>
       </span>
@@ -3662,8 +3663,16 @@ async function saveSettings() {
 // ═══════════════════════════════════════════════════════════════════
 const S3_SYNC_KEY = 'ba_s3_sync';
 const S3_LAST_SYNC_KEY = 'ba_s3_last_sync';
-const S3_SNAPSHOT_NAME_JSON = 'onepagent-snapshot.json';
-const S3_SNAPSHOT_NAME_BIN = 'onepagent-snapshot.bin';
+const S3_LAST_PASS_HASH_KEY = 'ba_s3_last_pass_hash';
+// v1 snapshot names (kept for backward-compat pull only)
+const S3_V1_JSON = 'onepagent-snapshot.json';
+const S3_V1_BIN = 'onepagent-snapshot.bin';
+// v2 object layout: manifest at prefix root, content-addressed objects + blobs
+const S3_MANIFEST_JSON = 'manifest.json';
+const S3_MANIFEST_BIN = 'manifest.bin';
+const S3_OBJ_DIR = 'objects/';
+const S3_BLOB_DIR = 'blobs/';
+const S3_POOL_CONCURRENCY = 4;
 const _s3TE = new TextEncoder();
 const _s3TD = new TextDecoder();
 
@@ -3755,11 +3764,11 @@ async function _s3Request(cfg, method, keyPath, body, contentType) {
   if (body) fetchOpts.body = body;
   return fetch(url, fetchOpts);
 }
-function _s3SnapshotKey(cfg, encrypted) {
-  const prefix = (cfg.prefix || 'onepagent/').replace(/^\/+|\/+$/g, '');
-  const name = encrypted ? S3_SNAPSHOT_NAME_BIN : S3_SNAPSHOT_NAME_JSON;
-  return prefix ? prefix + '/' + name : name;
-}
+function _s3Prefix(cfg) { return (cfg.prefix || 'onepagent/').replace(/^\/+|\/+$/g, ''); }
+function _manifestKey(cfg) { const p = _s3Prefix(cfg); const n = cfg.passphrase ? S3_MANIFEST_BIN : S3_MANIFEST_JSON; return p ? p + '/' + n : n; }
+function _objKey(cfg, hash) { const p = _s3Prefix(cfg); const n = S3_OBJ_DIR + hash + (cfg.passphrase ? '.bin' : '.json'); return p ? p + '/' + n : n; }
+function _blobKey(cfg, hash) { const p = _s3Prefix(cfg); const n = S3_BLOB_DIR + hash; return p ? p + '/' + n : n; }
+function _v1SnapshotKey(cfg, encrypted) { const p = _s3Prefix(cfg); const n = encrypted ? S3_V1_BIN : S3_V1_JSON; return p ? p + '/' + n : n; }
 async function _s3Put(cfg, key, body, contentType) {
   const resp = await _s3Request(cfg, 'PUT', key, body, contentType);
   if (!resp.ok) {
@@ -3804,11 +3813,11 @@ async function _s3DeriveKey(pass, salt) {
     baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
   );
 }
-async function _s3Encrypt(jsonStr, passphrase) {
+async function _s3EncryptBytes(plainBytes, passphrase) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await _s3DeriveKey(passphrase, salt);
-  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, _s3TE.encode(jsonStr)));
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plainBytes));
   const out = new Uint8Array(4 + 16 + 12 + cipher.length);
   out.set(_S3_MAGIC, 0);
   out.set(salt, 4);
@@ -3816,107 +3825,303 @@ async function _s3Encrypt(jsonStr, passphrase) {
   out.set(cipher, 32);
   return out;
 }
-async function _s3Decrypt(bytes, passphrase) {
+async function _s3DecryptBytes(bytes, passphrase) {
   if (bytes.length < 32 || bytes[0] !== 0x4F || bytes[1] !== 0x50 || bytes[2] !== 0x41 || bytes[3] !== 0x31) {
-    throw new Error('Not an OnePagent encrypted snapshot (magic header missing).');
+    throw new Error('Not an OnePagent encrypted object (magic header missing).');
   }
   const salt = bytes.slice(4, 20);
   const iv = bytes.slice(20, 32);
   const cipher = bytes.slice(32);
   const key = await _s3DeriveKey(passphrase, salt);
   let plain;
-  try {
-    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
-  } catch {
-    throw new Error('Decryption failed \u2014 wrong passphrase?');
-  }
-  return _s3TD.decode(plain);
+  try { plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher); }
+  catch { throw new Error('Decryption failed \u2014 wrong passphrase?'); }
+  return new Uint8Array(plain);
 }
+async function _s3Encrypt(jsonStr, passphrase) { return _s3EncryptBytes(_s3TE.encode(jsonStr), passphrase); }
+async function _s3Decrypt(bytes, passphrase) { return _s3TD.decode(await _s3DecryptBytes(bytes, passphrase)); }
 function _s3LooksEncrypted(bytes) {
   return bytes && bytes.length >= 4 && bytes[0] === 0x4F && bytes[1] === 0x50 && bytes[2] === 0x41 && bytes[3] === 0x31;
 }
 
-// ── Snapshot build / apply ────────────────────────────────────────
-async function buildSnapshot() {
-  // Persist current in-memory conv first so the snapshot is fresh.
-  try { if (activeConvId) await saveCurrentConv(false); } catch {}
+// ── Progress tracking (rendered in the sync menu) ─────────────────
+let _s3Progress = null;
+let _s3OpActive = false;
+function _setProgress(phase, current, total, note) {
+  if (phase == null) { _s3Progress = null; _s3OpActive = false; }
+  else { _s3Progress = { phase, current: current || 0, total: Math.max(1, total || 1), note: note || '', ts: Date.now() }; _s3OpActive = true; }
+  _renderProgress();
+}
+function _renderProgress() {
+  const el = document.getElementById('syncProgress');
+  if (!el) return;
+  if (!_s3Progress) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const { phase, current, total, note } = _s3Progress;
+  const pct = Math.min(100, Math.round(100 * current / total));
+  el.style.display = 'block';
+  el.innerHTML =
+    '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-secondary);margin-bottom:3px">' +
+    '<span>' + esc(phase) + '</span><span>' + current + '/' + total + ' \u00b7 ' + pct + '%</span></div>' +
+    '<div style="background:var(--border);height:4px;border-radius:2px;overflow:hidden">' +
+    '<div style="background:var(--accent-orange);height:100%;width:' + pct + '%;transition:width 0.15s"></div></div>' +
+    (note ? '<div style="font-size:10px;color:var(--text-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(note) + '</div>' : '');
+  const m = document.getElementById('syncMenu');
+  if (m && m.style.display !== 'block') { m.style.display = 'block'; }
+  const pushBtn = document.getElementById('syncPushBtn');
+  const pullBtn = document.getElementById('syncPullBtn');
+  if (pushBtn) pushBtn.disabled = true;
+  if (pullBtn) pullBtn.disabled = true;
+  if (!_s3Progress) { if (pushBtn) pushBtn.disabled = false; if (pullBtn) pullBtn.disabled = false; }
+}
+function _clearProgress() {
+  _s3Progress = null; _s3OpActive = false;
+  const el = document.getElementById('syncProgress');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  const pushBtn = document.getElementById('syncPushBtn');
+  const pullBtn = document.getElementById('syncPullBtn');
+  if (pushBtn) pushBtn.disabled = false;
+  if (pullBtn) pullBtn.disabled = false;
+}
 
-  const convMeta = await loadConvMetaFromDB() || [];
-  const convData = {};
+// ── Promise pool (bounded concurrency) ────────────────────────────
+async function _s3Pool(items, worker, concurrency) {
+  concurrency = concurrency || S3_POOL_CONCURRENCY;
+  let idx = 0;
+  const errors = [];
+  async function run() {
+    while (idx < items.length) {
+      const i = idx++;
+      try { await worker(items[i], i); }
+      catch (e) { errors.push(e); throw e; }
+    }
+  }
+  const runners = [];
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) runners.push(run());
+  await Promise.all(runners);
+  if (errors.length) throw errors[0];
+}
+
+// ── Content-hash helpers ──────────────────────────────────────────
+async function _hashBytes(bytes) { return _s3Sha256Hex(bytes); }
+async function _hashString(str) { return _s3Sha256Hex(str); }
+
+// ── Blob extraction / inlining ────────────────────────────────────
+// Walks an object tree, replaces binary data (Uint8Array) with {$blob,size} refs,
+// and collects bytes into the `blobs` Map<hash, Uint8Array>.
+async function _extractBlobs(obj, blobs) {
+  if (obj == null || typeof obj !== 'object') return obj;
+  if (obj instanceof Uint8Array) {
+    const hash = await _hashBytes(obj);
+    if (!blobs.has(hash)) blobs.set(hash, obj);
+    return { $blob: hash, size: obj.length };
+  }
+  if (Array.isArray(obj)) {
+    const out = new Array(obj.length);
+    for (let i = 0; i < obj.length; i++) out[i] = await _extractBlobs(obj[i], blobs);
+    return out;
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = await _extractBlobs(v, blobs);
+  return out;
+}
+// Reverse: replace every {$blob,size} ref with the corresponding Uint8Array from blobMap.
+function _inlineBlobs(obj, blobMap) {
+  if (obj == null || typeof obj !== 'object') return obj;
+  if (typeof obj.$blob === 'string') {
+    const b = blobMap.get(obj.$blob);
+    if (!b) throw new Error('Missing blob ' + obj.$blob.slice(0, 12));
+    return b;
+  }
+  if (Array.isArray(obj)) return obj.map(v => _inlineBlobs(v, blobMap));
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = _inlineBlobs(v, blobMap);
+  return out;
+}
+// Walk object and collect all referenced blob hashes.
+function _collectBlobRefs(obj, set) {
+  if (obj == null || typeof obj !== 'object') return;
+  if (typeof obj.$blob === 'string') { set.add(obj.$blob); return; }
+  if (Array.isArray(obj)) { for (const x of obj) _collectBlobRefs(x, set); return; }
+  for (const v of Object.values(obj)) _collectBlobRefs(v, set);
+}
+
+// ── Manifest / object / blob transport (encrypted when cfg.passphrase is set) ──
+async function _getManifest(cfg) {
+  // Try the preferred key first (based on current passphrase), fall back to the other.
+  const keys = cfg.passphrase ? [_manifestKey(cfg), _manifestKey({ ...cfg, passphrase: '' })]
+                              : [_manifestKey(cfg), _manifestKey({ ...cfg, passphrase: 'x' })];
+  for (const k of keys) {
+    const bytes = await _s3Get(cfg, k);
+    if (!bytes) continue;
+    let jsonStr;
+    if (_s3LooksEncrypted(bytes)) {
+      if (!cfg.passphrase) throw new Error('Remote manifest is encrypted \u2014 passphrase required.');
+      jsonStr = await _s3Decrypt(bytes, cfg.passphrase);
+    } else {
+      jsonStr = _s3TD.decode(bytes);
+    }
+    return JSON.parse(jsonStr);
+  }
+  return null;
+}
+async function _putManifest(cfg, manifest) {
+  const jsonStr = JSON.stringify(manifest);
+  const body = cfg.passphrase ? await _s3Encrypt(jsonStr, cfg.passphrase) : _s3TE.encode(jsonStr);
+  const contentType = cfg.passphrase ? 'application/octet-stream' : 'application/json';
+  await _s3Put(cfg, _manifestKey(cfg), body, contentType);
+}
+async function _putJsonObject(cfg, hash, jsonStr) {
+  const body = cfg.passphrase ? await _s3Encrypt(jsonStr, cfg.passphrase) : _s3TE.encode(jsonStr);
+  const contentType = cfg.passphrase ? 'application/octet-stream' : 'application/json';
+  await _s3Put(cfg, _objKey(cfg, hash), body, contentType);
+}
+async function _getJsonObject(cfg, hash) {
+  const bytes = await _s3Get(cfg, _objKey(cfg, hash));
+  if (!bytes) return null;
+  const jsonStr = _s3LooksEncrypted(bytes) ? await _s3Decrypt(bytes, cfg.passphrase) : _s3TD.decode(bytes);
+  return JSON.parse(jsonStr);
+}
+async function _putBlob(cfg, hash, bytes) {
+  const body = cfg.passphrase ? await _s3EncryptBytes(bytes, cfg.passphrase) : bytes;
+  await _s3Put(cfg, _blobKey(cfg, hash), body, 'application/octet-stream');
+}
+async function _getBlob(cfg, hash) {
+  const bytes = await _s3Get(cfg, _blobKey(cfg, hash));
+  if (!bytes) return null;
+  return _s3LooksEncrypted(bytes) ? _s3DecryptBytes(bytes, cfg.passphrase) : bytes;
+}
+
+// ── Build local state for v2 sync ─────────────────────────────────
+// Returns { manifest, objects: Map<hash,jsonStr>, blobs: Map<hash,Uint8Array> }.
+async function _buildLocalState() {
+  const cfg = _loadS3Cfg() || {};
+  const convMeta = (await loadConvMetaFromDB()) || [];
+  const objects = new Map();
+  const blobs = new Map();
+
+  const convEntries = [];
   for (const c of convMeta) {
     const d = await loadConvDataFromDB(c.id);
-    if (d) convData[c.id] = d;
+    if (!d) continue;
+    // chatHTML is a render cache — drop it to save bandwidth; rebuilt on switchConversation.
+    const { chatHTML, ...rest } = d;
+    // Extract binary bytes from vfs tree into blob refs.
+    const vfsRefs = await _extractBlobs(rest.vfs, blobs);
+    const convObj = { ...rest, vfs: vfsRefs };
+    const jsonStr = JSON.stringify(convObj);
+    const hash = await _hashString(jsonStr);
+    objects.set(hash, jsonStr);
+    convEntries.push({
+      id: c.id, title: c.title, created: c.created, updated: c.updated,
+      loopCount: c.loopCount, totalTokens: c.totalTokens, contextTokens: c.contextTokens,
+      messageCount: c.messageCount, hash
+    });
   }
-  const skillFiles = {};
-  const skillMeta = [];
-  for (const s of skills) {
-    const { files, binaryFiles, ...rest } = s;
-    skillMeta.push(rest);
-    skillFiles[s.name] = await loadSkillFilesFromDB(s.name);
-  }
-  const settings = { ...(loadSettings() || {}) };
-  delete settings.api_key;
-  delete settings.tavily_api_key;
 
-  return {
-    version: 1,
-    exportedAt: Date.now(),
-    conversations: { meta: convMeta, data: convData },
-    skills: { metadata: skillMeta, files: skillFiles },
-    settings,
+  const skillEntries = [];
+  for (const s of skills) {
+    const payload = await loadSkillFilesFromDB(s.name);
+    // Skill binaryFiles are plain number arrays in storage; convert to Uint8Array for content-addressing.
+    const bfRefs = {};
+    for (const [fn, arr] of Object.entries(payload.binaryFiles || {})) {
+      const bytes = arr instanceof Uint8Array ? arr : new Uint8Array(arr);
+      const hash = await _hashBytes(bytes);
+      if (!blobs.has(hash)) blobs.set(hash, bytes);
+      bfRefs[fn] = { $blob: hash, size: bytes.length };
+    }
+    const { files, binaryFiles, ...meta } = s;
+    const skillObj = { metadata: meta, files: payload.files || {}, binaryFiles: bfRefs };
+    const jsonStr = JSON.stringify(skillObj);
+    const hash = await _hashString(jsonStr);
+    objects.set(hash, jsonStr);
+    skillEntries.push({ name: s.name, hash });
+  }
+
+  const baseSettings = { ...(loadSettings() || {}) };
+  delete baseSettings.api_key;
+  delete baseSettings.tavily_api_key;
+  const settingsObj = {
+    settings: baseSettings,
     mcpTools: Array.isArray(mcpTools) ? mcpTools : [],
     disabledTools: disabledTools instanceof Set ? [...disabledTools] : [],
     wsConfig: { ...(wsConfig || {}) },
     theme: localStorage.getItem('ba_theme') || 'dark',
     selectedModel: localStorage.getItem('ba_selected_model') || ''
   };
+  const settingsJson = JSON.stringify(settingsObj);
+  const settingsHash = await _hashString(settingsJson);
+  objects.set(settingsHash, settingsJson);
+
+  const manifest = {
+    version: 2,
+    updatedAt: Date.now(),
+    encrypted: !!cfg.passphrase,
+    conversations: convEntries,
+    skills: skillEntries,
+    settings: { hash: settingsHash },
+    blobs: [...blobs.keys()].sort()
+  };
+  return { manifest, objects, blobs };
 }
 
-async function applySnapshot(snap) {
-  if (!snap || typeof snap !== 'object') throw new Error('Invalid snapshot');
-  if (snap.version !== 1) throw new Error('Unsupported snapshot version: ' + snap.version);
+// ── Apply a pulled remote state to local storage ──────────────────
+async function _applyRemoteState(remote, objs, blobMap) {
+  // 1. Settings (preserve local LLM / Tavily keys).
+  if (remote.settings?.hash) {
+    const s = objs.get(remote.settings.hash);
+    if (s) {
+      const local = loadSettings() || {};
+      const merged = { ...(s.settings || {}) };
+      if (local.api_key) merged.api_key = local.api_key;
+      if (local.tavily_api_key) merged.tavily_api_key = local.tavily_api_key;
+      saveSettingsToStorage(merged);
+      if (Array.isArray(s.mcpTools)) {
+        mcpTools = s.mcpTools.slice();
+        try { localStorage.setItem('ba_mcp_tools', JSON.stringify(mcpTools)); } catch {}
+      }
+      if (Array.isArray(s.disabledTools)) {
+        disabledTools = new Set(s.disabledTools);
+        try { localStorage.setItem('ba_disabled_tools', JSON.stringify([...disabledTools])); } catch {}
+      }
+      if (s.wsConfig) {
+        Object.assign(wsConfig, s.wsConfig);
+        try { localStorage.setItem('ba_ws_config', JSON.stringify(wsConfig)); } catch {}
+      }
+      if (s.theme) try { localStorage.setItem('ba_theme', s.theme); } catch {}
+      if (s.selectedModel) try { localStorage.setItem('ba_selected_model', s.selectedModel); } catch {}
+    }
+  }
 
-  // 1. Settings — preserve local LLM / Tavily keys.
-  const local = loadSettings() || {};
-  const mergedSettings = { ...(snap.settings || {}) };
-  if (local.api_key) mergedSettings.api_key = local.api_key;
-  if (local.tavily_api_key) mergedSettings.tavily_api_key = local.tavily_api_key;
-  saveSettingsToStorage(mergedSettings);
-
-  // 2. Conversations
-  const convMeta = snap.conversations?.meta || [];
-  const convData = snap.conversations?.data || {};
+  // 2. Conversations — strip hash from meta before persisting.
+  const convMeta = (remote.conversations || []).map(c => {
+    const { hash, ...rest } = c;
+    return rest;
+  });
   await saveConvMetaToDB(convMeta);
-  for (const c of convMeta) {
-    if (convData[c.id]) await saveConvDataToDB(c.id, convData[c.id]);
+  for (const c of (remote.conversations || [])) {
+    const obj = objs.get(c.hash);
+    if (!obj) continue;
+    const vfsRestored = _inlineBlobs(obj.vfs, blobMap);
+    await saveConvDataToDB(c.id, { ...obj, vfs: vfsRestored });
   }
 
-  // 3. Skills (metadata to localStorage, files to IDB)
-  const sMeta = snap.skills?.metadata || [];
-  const sFiles = snap.skills?.files || {};
-  try { localStorage.setItem('ba_skills', JSON.stringify(sMeta)); } catch {}
-  for (const s of sMeta) {
-    const payload = sFiles[s.name] || { files: {}, binaryFiles: {} };
-    await saveSkillFilesToDB(s.name, payload);
+  // 3. Skills — metadata to localStorage (without files), files+binaryFiles to IDB.
+  const skillsMeta = [];
+  for (const s of (remote.skills || [])) {
+    const obj = objs.get(s.hash);
+    if (!obj) continue;
+    skillsMeta.push(obj.metadata || { name: s.name });
+    const bfNumArrays = {};
+    for (const [fn, ref] of Object.entries(obj.binaryFiles || {})) {
+      if (ref && typeof ref === 'object' && ref.$blob && blobMap.has(ref.$blob)) {
+        bfNumArrays[fn] = Array.from(blobMap.get(ref.$blob));
+      }
+    }
+    await saveSkillFilesToDB(s.name, { files: obj.files || {}, binaryFiles: bfNumArrays });
   }
+  try { localStorage.setItem('ba_skills', JSON.stringify(skillsMeta)); } catch {}
 
-  // 4. Ancillary stores
-  if (Array.isArray(snap.mcpTools)) {
-    mcpTools = snap.mcpTools.slice();
-    try { localStorage.setItem('ba_mcp_tools', JSON.stringify(mcpTools)); } catch {}
-  }
-  if (Array.isArray(snap.disabledTools)) {
-    disabledTools = new Set(snap.disabledTools);
-    try { localStorage.setItem('ba_disabled_tools', JSON.stringify([...disabledTools])); } catch {}
-  }
-  if (snap.wsConfig) {
-    Object.assign(wsConfig, snap.wsConfig);
-    try { localStorage.setItem('ba_ws_config', JSON.stringify(wsConfig)); } catch {}
-  }
-  if (snap.theme) { try { localStorage.setItem('ba_theme', snap.theme); } catch {} }
-  if (snap.selectedModel) { try { localStorage.setItem('ba_selected_model', snap.selectedModel); } catch {} }
-
-  // 5. Reload UI
+  // 4. Reload in-memory UI state from the freshly-written stores.
   skills = [];
   await loadSkills();
   await loadConvHistory();
@@ -3925,66 +4130,230 @@ async function applySnapshot(snap) {
   applyModelContextLimit();
 }
 
-// ── Sync actions ──────────────────────────────────────────────────
+// ── v1 legacy pull (single-blob snapshot from before the v2 split) ─
+async function _tryPullV1(cfg) {
+  const keys = cfg.passphrase
+    ? [_v1SnapshotKey(cfg, true), _v1SnapshotKey(cfg, false)]
+    : [_v1SnapshotKey(cfg, false), _v1SnapshotKey(cfg, true)];
+  for (const k of keys) {
+    const bytes = await _s3Get(cfg, k);
+    if (!bytes) continue;
+    const jsonStr = _s3LooksEncrypted(bytes) ? await _s3Decrypt(bytes, cfg.passphrase) : _s3TD.decode(bytes);
+    return JSON.parse(jsonStr);
+  }
+  return null;
+}
+async function _applyV1Snapshot(snap) {
+  if (!snap || snap.version !== 1) throw new Error('Unsupported v1 snapshot');
+  const local = loadSettings() || {};
+  const merged = { ...(snap.settings || {}) };
+  if (local.api_key) merged.api_key = local.api_key;
+  if (local.tavily_api_key) merged.tavily_api_key = local.tavily_api_key;
+  saveSettingsToStorage(merged);
+  const convMeta = snap.conversations?.meta || [];
+  const convData = snap.conversations?.data || {};
+  await saveConvMetaToDB(convMeta);
+  for (const c of convMeta) { if (convData[c.id]) await saveConvDataToDB(c.id, convData[c.id]); }
+  const sMeta = snap.skills?.metadata || [];
+  const sFiles = snap.skills?.files || {};
+  try { localStorage.setItem('ba_skills', JSON.stringify(sMeta)); } catch {}
+  for (const s of sMeta) { await saveSkillFilesToDB(s.name, sFiles[s.name] || { files: {}, binaryFiles: {} }); }
+  if (Array.isArray(snap.mcpTools)) { mcpTools = snap.mcpTools.slice(); try { localStorage.setItem('ba_mcp_tools', JSON.stringify(mcpTools)); } catch {} }
+  if (Array.isArray(snap.disabledTools)) { disabledTools = new Set(snap.disabledTools); try { localStorage.setItem('ba_disabled_tools', JSON.stringify([...disabledTools])); } catch {} }
+  if (snap.wsConfig) { Object.assign(wsConfig, snap.wsConfig); try { localStorage.setItem('ba_ws_config', JSON.stringify(wsConfig)); } catch {} }
+  if (snap.theme) try { localStorage.setItem('ba_theme', snap.theme); } catch {}
+  if (snap.selectedModel) try { localStorage.setItem('ba_selected_model', snap.selectedModel); } catch {}
+  skills = [];
+  await loadSkills();
+  await loadConvHistory();
+  if (typeof renderToolsGrid === 'function') renderToolsGrid();
+  if (typeof updateWsStatus === 'function') updateWsStatus();
+  applyModelContextLimit();
+}
+
+// ── Push (v2 incremental, hash-dedup, progress) ───────────────────
 async function pushSnapshotToS3(silent) {
   const cfg = _loadS3Cfg();
   if (!_s3Configured(cfg)) throw new Error('Cloud sync not configured \u2014 open Settings.');
+  if (_s3OpActive) throw new Error('A sync operation is already in progress.');
   _s3PushInFlight = true;
   try {
-    const snap = await buildSnapshot();
-    const json = JSON.stringify(snap);
-    let body, contentType, name;
-    if (cfg.passphrase) {
-      body = await _s3Encrypt(json, cfg.passphrase);
-      contentType = 'application/octet-stream';
-      name = _s3SnapshotKey(cfg, true);
-    } else {
-      body = _s3TE.encode(json);
-      contentType = 'application/json';
-      name = _s3SnapshotKey(cfg, false);
+    _setProgress('Preparing', 0, 1, 'Persisting current conversation...');
+    if (activeConvId) try { await saveCurrentConv(false); } catch {}
+
+    _setProgress('Scanning local state', 0, 1, 'Hashing conversations, skills, blobs...');
+    const { manifest, objects, blobs } = await _buildLocalState();
+
+    _setProgress('Checking remote', 0, 1, 'Fetching current manifest...');
+    const remote = await _getManifest(cfg).catch(() => null);
+
+    // If passphrase changed since last successful push, force re-upload of everything.
+    const passHash = cfg.passphrase ? await _hashString(cfg.passphrase) : '';
+    const lastPassHash = localStorage.getItem(S3_LAST_PASS_HASH_KEY) || '';
+    const passChanged = passHash !== lastPassHash;
+
+    const remoteObjHashes = new Set();
+    const remoteBlobHashes = new Set();
+    if (remote && remote.version === 2 && !passChanged) {
+      for (const c of remote.conversations || []) remoteObjHashes.add(c.hash);
+      for (const s of remote.skills || []) remoteObjHashes.add(s.hash);
+      if (remote.settings?.hash) remoteObjHashes.add(remote.settings.hash);
+      for (const h of remote.blobs || []) remoteBlobHashes.add(h);
     }
-    await _s3Put(cfg, name, body, contentType);
+
+    const blobsToUpload = [...blobs.keys()].filter(h => !remoteBlobHashes.has(h));
+    const objectsToUpload = [...objects.keys()].filter(h => !remoteObjHashes.has(h));
+
+    let newBytes = 0;
+    if (blobsToUpload.length) {
+      _setProgress('Uploading blobs', 0, blobsToUpload.length, '');
+      let done = 0;
+      await _s3Pool(blobsToUpload, async (h) => {
+        const bytes = blobs.get(h);
+        await _putBlob(cfg, h, bytes);
+        newBytes += bytes.length;
+        done++;
+        _setProgress('Uploading blobs', done, blobsToUpload.length, h.slice(0, 12) + '\u2026 (' + (bytes.length / 1024).toFixed(1) + ' KB)');
+      });
+    }
+    if (objectsToUpload.length) {
+      _setProgress('Uploading objects', 0, objectsToUpload.length, '');
+      let done = 0;
+      await _s3Pool(objectsToUpload, async (h) => {
+        const json = objects.get(h);
+        await _putJsonObject(cfg, h, json);
+        newBytes += json.length;
+        done++;
+        _setProgress('Uploading objects', done, objectsToUpload.length, h.slice(0, 12) + '\u2026');
+      });
+    }
+
+    _setProgress('Updating manifest', 0, 1, '');
+    await _putManifest(cfg, manifest);
+    _setProgress('Updating manifest', 1, 1, '');
+
     try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
+    try { localStorage.setItem(S3_LAST_PASS_HASH_KEY, passHash); } catch {}
     _updateSyncStatus();
-    const kb = (body.length / 1024).toFixed(1);
-    if (!silent) appendSystemMsg(`\u2601 Snapshot pushed to S3 (${kb} KB, ${snap.conversations.meta.length} conv, ${snap.skills.metadata.length} skills)${cfg.passphrase ? ' \u2014 encrypted' : ''}.`);
-    return snap;
+    const totalObjs = objects.size, totalBlobs = blobs.size;
+    const kb = (newBytes / 1024).toFixed(1);
+    if (!silent) appendSystemMsg(
+      '\u2601 Push: ' + objectsToUpload.length + '/' + totalObjs + ' object(s), '
+      + blobsToUpload.length + '/' + totalBlobs + ' blob(s) uploaded, '
+      + kb + ' KB new'
+      + (cfg.passphrase ? ' \u2014 encrypted' : '')
+      + ((!objectsToUpload.length && !blobsToUpload.length) ? ' \u2014 already up to date' : '')
+      + '.'
+    );
+    _clearProgress();
+    return manifest;
+  } catch (e) {
+    _clearProgress();
+    throw e;
   } finally {
     _s3PushInFlight = false;
   }
 }
 
+// ── Pull (v2 incremental, hash-dedup, progress; v1 fallback) ──────
 async function pullSnapshotFromS3() {
   const cfg = _loadS3Cfg();
   if (!_s3Configured(cfg)) throw new Error('Cloud sync not configured \u2014 open Settings.');
-  // Try encrypted blob first if passphrase is set, else plaintext first.
-  const tryOrder = cfg.passphrase
-    ? [_s3SnapshotKey(cfg, true), _s3SnapshotKey(cfg, false)]
-    : [_s3SnapshotKey(cfg, false), _s3SnapshotKey(cfg, true)];
-  let bytes = null;
-  for (const k of tryOrder) {
-    bytes = await _s3Get(cfg, k);
-    if (bytes) break;
-  }
-  if (!bytes) throw new Error('No snapshot found in bucket. Push one first.');
+  if (_s3OpActive) throw new Error('A sync operation is already in progress.');
+  try {
+    _setProgress('Fetching manifest', 0, 1, '');
+    const remote = await _getManifest(cfg);
 
-  let jsonStr;
-  if (_s3LooksEncrypted(bytes)) {
-    if (!cfg.passphrase) throw new Error('Snapshot is encrypted \u2014 passphrase required in settings.');
-    jsonStr = await _s3Decrypt(bytes, cfg.passphrase);
-  } else {
-    jsonStr = _s3TD.decode(bytes);
+    // v1 legacy fallback — migrate on the fly.
+    if (!remote) {
+      _setProgress('Fetching manifest', 0, 1, 'v2 manifest not found, trying v1 snapshot...');
+      const v1 = await _tryPullV1(cfg);
+      if (!v1) throw new Error('No snapshot found in bucket. Push first.');
+      const date = new Date(v1.exportedAt || Date.now()).toLocaleString();
+      if (!confirm('Pull legacy v1 snapshot from ' + date + '?\nWill be migrated to v2 on next push.')) {
+        _clearProgress(); return;
+      }
+      _setProgress('Applying v1 snapshot', 0, 1, '');
+      await _applyV1Snapshot(v1);
+      try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
+      _updateSyncStatus();
+      appendSystemMsg('\u2601 Pulled v1 snapshot (' + (v1.conversations?.meta?.length || 0) + ' conv, ' + (v1.skills?.metadata?.length || 0) + ' skills). Push to migrate to v2.');
+      _clearProgress();
+      return;
+    }
+
+    if (remote.version !== 2) throw new Error('Unsupported manifest version: ' + remote.version);
+
+    const date = new Date(remote.updatedAt || Date.now()).toLocaleString();
+    if (!confirm(
+      'Pull snapshot from ' + date + '?\n\n' +
+      '  \u2022 ' + (remote.conversations || []).length + ' conversation(s)\n' +
+      '  \u2022 ' + (remote.skills || []).length + ' skill(s)\n\n' +
+      'Local changes not yet pushed will be lost. LLM / Tavily keys are preserved.'
+    )) { _clearProgress(); return; }
+
+    // Build local state to figure out which objects/blobs we already have (dedup on pull too).
+    _setProgress('Scanning local state', 0, 1, '');
+    const local = await _buildLocalState();
+
+    const neededObjHashes = [];
+    for (const c of remote.conversations || []) if (!local.objects.has(c.hash)) neededObjHashes.push(c.hash);
+    for (const s of remote.skills || []) if (!local.objects.has(s.hash)) neededObjHashes.push(s.hash);
+    if (remote.settings?.hash && !local.objects.has(remote.settings.hash)) neededObjHashes.push(remote.settings.hash);
+
+    const objs = new Map();
+    // Reuse local copies for hashes we already have.
+    for (const c of remote.conversations || []) if (local.objects.has(c.hash)) objs.set(c.hash, JSON.parse(local.objects.get(c.hash)));
+    for (const s of remote.skills || []) if (local.objects.has(s.hash)) objs.set(s.hash, JSON.parse(local.objects.get(s.hash)));
+    if (remote.settings?.hash && local.objects.has(remote.settings.hash)) objs.set(remote.settings.hash, JSON.parse(local.objects.get(remote.settings.hash)));
+
+    if (neededObjHashes.length) {
+      _setProgress('Downloading objects', 0, neededObjHashes.length, '');
+      let done = 0;
+      await _s3Pool(neededObjHashes, async (h) => {
+        const o = await _getJsonObject(cfg, h);
+        if (o) objs.set(h, o);
+        done++;
+        _setProgress('Downloading objects', done, neededObjHashes.length, h.slice(0, 12) + '\u2026');
+      });
+    }
+
+    // Collect blobs referenced by the downloaded object set.
+    const refSet = new Set();
+    for (const o of objs.values()) _collectBlobRefs(o, refSet);
+    const blobMap = new Map();
+    // Reuse local blobs where possible.
+    for (const h of refSet) if (local.blobs.has(h)) blobMap.set(h, local.blobs.get(h));
+    const blobsNeeded = [...refSet].filter(h => !blobMap.has(h));
+
+    if (blobsNeeded.length) {
+      _setProgress('Downloading blobs', 0, blobsNeeded.length, '');
+      let done = 0;
+      await _s3Pool(blobsNeeded, async (h) => {
+        const b = await _getBlob(cfg, h);
+        if (b) blobMap.set(h, b);
+        done++;
+        _setProgress('Downloading blobs', done, blobsNeeded.length, h.slice(0, 12) + '\u2026 (' + (b ? (b.length / 1024).toFixed(1) + ' KB' : '?') + ')');
+      });
+    }
+
+    _setProgress('Applying changes', 0, 1, '');
+    await _applyRemoteState(remote, objs, blobMap);
+    _setProgress('Applying changes', 1, 1, '');
+
+    try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
+    const passHash = cfg.passphrase ? await _hashString(cfg.passphrase) : '';
+    try { localStorage.setItem(S3_LAST_PASS_HASH_KEY, passHash); } catch {}
+    _updateSyncStatus();
+    appendSystemMsg(
+      '\u2601 Pull: ' + neededObjHashes.length + ' object(s) downloaded, '
+      + blobsNeeded.length + ' blob(s) downloaded, rest reused locally.'
+    );
+    _clearProgress();
+  } catch (e) {
+    _clearProgress();
+    throw e;
   }
-  const snap = JSON.parse(jsonStr);
-  const date = new Date(snap.exportedAt || Date.now()).toLocaleString();
-  if (!confirm(`Replace all local data with snapshot from ${date}?\n\n` +
-    `  \u2022 ${(snap.conversations?.meta || []).length} conversations\n` +
-    `  \u2022 ${(snap.skills?.metadata || []).length} skills\n\n` +
-    `This cannot be undone. Your LLM and Tavily keys are preserved.`)) return;
-  await applySnapshot(snap);
-  try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
-  _updateSyncStatus();
-  appendSystemMsg('\u2601 Snapshot pulled from S3.');
 }
 
 async function testS3Connection() {
@@ -3997,7 +4366,7 @@ async function testS3Connection() {
   }
   try {
     // HEAD on snapshot key — 404 is OK (means the bucket is reachable and auth works).
-    await _s3Head(cfg, _s3SnapshotKey(cfg, cfg.passphrase ? true : false));
+    await _s3Head(cfg, _manifestKey(cfg));
     if (status) status.textContent = '\u2705 Connection OK \u2014 bucket is reachable.';
   } catch (e) {
     const msg = String(e.message || e);
@@ -4048,11 +4417,16 @@ function _saveS3CfgFromModal() {
 function toggleSyncMenu() {
   const m = document.getElementById('syncMenu');
   if (!m) return;
-  if (m.style.display === 'block') { m.style.display = 'none'; return; }
+  if (m.style.display === 'block') {
+    if (_s3OpActive) return;  // don't allow closing mid-operation
+    m.style.display = 'none';
+    return;
+  }
   _updateSyncStatus();
   m.style.display = 'block';
   setTimeout(() => {
     const h = e => {
+      if (_s3OpActive) return;  // block outside-click close while syncing
       if (!m.contains(e.target) && e.target.id !== 'syncBtn') { m.style.display = 'none'; document.removeEventListener('click', h); }
     };
     document.addEventListener('click', h);
@@ -4077,13 +4451,9 @@ function _updateSyncStatus() {
   el.textContent = 'Last synced ' + ago + (cfg.passphrase ? ' \u2014 encrypted' : '');
 }
 async function onSyncPushClick() {
-  const m = document.getElementById('syncMenu');
-  if (m) m.style.display = 'none';
   try { await pushSnapshotToS3(); } catch (e) { appendSystemMsg('\u26A0 Push failed: ' + (e.message || e)); }
 }
 async function onSyncPullClick() {
-  const m = document.getElementById('syncMenu');
-  if (m) m.style.display = 'none';
   try { await pullSnapshotFromS3(); } catch (e) { appendSystemMsg('\u26A0 Pull failed: ' + (e.message || e)); }
 }
 
