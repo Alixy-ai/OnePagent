@@ -1687,7 +1687,7 @@ function newConversation(skipSave) {
   totalTokens = 0;
   contextTokens = 0;
   currentViewFile = null;
-  chatEl.innerHTML = '<div class="msg msg-system"><div class="msg-body">New conversation. Upload files and type a task to begin.</div></div>';
+  chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">New conversation. Upload files and type a task to begin.</div></div>';
   // Remount active skills
   for (const s of skills) { if (s.active) mountSkillToVfs(s); }
   renderFileTree();
@@ -1725,7 +1725,7 @@ async function switchConversation(id, skipSave) {
   contextTokens = data?.contextTokens ?? meta.contextTokens ?? 0;
   currentViewFile = null;
   if (data?.chatHTML) chatEl.innerHTML = data.chatHTML;
-  else chatEl.innerHTML = '<div class="msg msg-system"><div class="msg-body">Conversation loaded.</div></div>';
+  else chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation loaded.</div></div>';
   // Batch remount skills — single renderFileTree at the end
   for (const s of skills) { if (s.active) mountSkillToVfs(s, true); }
   renderFileTree();
@@ -1818,7 +1818,7 @@ function clearConversation() {
   loopCount = 0;
   totalTokens = 0;
   contextTokens = 0;
-  chatEl.innerHTML = '<div class="msg msg-system"><div class="msg-body">Conversation cleared. Type a task to begin.</div></div>';
+  chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation cleared. Type a task to begin.</div></div>';
   updateMemoryUI();
   document.getElementById('memoryLog').innerHTML = '';
   saveCurrentConv(true);
@@ -4864,7 +4864,12 @@ chatEl.addEventListener('scroll', () => { _autoScrollChat = isNearBottom(chatEl,
 function scrollBottom(force = false) {
   if (force || _autoScrollChat) chatEl.scrollTop = chatEl.scrollHeight;
 }
+function clearChatPlaceholder() {
+  const ph = chatEl.querySelector('.msg-placeholder');
+  if (ph) ph.remove();
+}
 function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEntryId = '') {
+  clearChatPlaceholder();
   const d = document.createElement('div'); d.className = 'msg msg-user';
   if (Number.isInteger(promptIndex)) d.dataset.promptIndex = String(promptIndex);
   if (promptEntryId) d.dataset.promptEntryId = promptEntryId;
@@ -4886,6 +4891,7 @@ function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEnt
   chatEl.appendChild(d); scrollBottom();
 }
 function appendAssistantBubble() {
+  clearChatPlaceholder();
   const d = document.createElement('div'); d.className = 'msg msg-assistant';
   const reasoningEl = document.createElement('div'); reasoningEl.className = 'reasoning-card'; reasoningEl.dataset.role = 'assistant-reasoning'; reasoningEl.style.display = 'none';
   reasoningEl.innerHTML = `<div class="reasoning-header" onclick="toggleReasoningCard(this.parentElement)"><span class="reasoning-title">Thinking</span><span class="reasoning-summary"></span><span class="tool-arrow open">\u25BC</span></div><div class="reasoning-body show"></div>`;
