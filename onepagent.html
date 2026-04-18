@@ -935,6 +935,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <button class="top-btn hide-mobile" onclick="clearConversation()">Clear</button>
       <button class="top-btn hide-mobile" onclick="runFsDiagnostics()">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()">Export</button>
+      <button class="top-btn hide-mobile" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution">&#x1F4CB; Plan</button>
       <span style="position:relative;display:inline-block">
         <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket">&#x2601; Sync</button>
         <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:240px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
@@ -1074,15 +1075,18 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
     </div>
+    <!-- Todos -->
+    <div class="panel-section" data-section="todos">
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x2705;</span> TODOS</span><span id="todoCounts" style="flex:none;font-size:10px;color:var(--text-dim);margin-right:6px"></span><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-body">
+        <div id="todosArea"></div>
+      </div>
+    </div>
     <!-- Hooks -->
     <div class="panel-section" data-section="hooks">
-      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x26A1;</span> HOOKS<span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x26A1;</span> HOOKS</span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openHookModal()">&#x2795; Add</button><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
-        <div id="hooksArea">
-          <div class="hook-item"><span class="h-icon">&#x26A1;</span><span>pre_tool &rarr; validate &amp; log</span></div>
-          <div class="hook-item"><span class="h-icon">&#x26A1;</span><span>post_tool &rarr; update file tree</span></div>
-          <div class="hook-item"><span class="h-icon">&#x26A1;</span><span>on_error &rarr; retry with backoff</span></div>
-        </div>
+        <div id="hooksArea"></div>
       </div>
     </div>
     <!-- Memory -->
@@ -1285,6 +1289,70 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
         Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Plan Approval Modal -->
+<div class="modal-overlay" id="planModal">
+  <div class="modal" style="width:clamp(320px,92vw,640px)">
+    <div class="modal-header">
+      <h3>&#x1F4CB; Review Plan</h3>
+      <button class="modal-close" onclick="rejectPlan()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="planModalBody" style="max-height:50vh;overflow-y:auto;padding:10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;margin-bottom:12px;font-size:12px;line-height:1.5"></div>
+      <label>Feedback <span style="text-transform:none;color:var(--text-dim)">(only used on Reject \u2014 tells the agent what to revise)</span></label>
+      <textarea id="planModalFeedback" placeholder="e.g. use threads instead of async; skip the cache layer" style="min-height:60px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="modal-btn primary" onclick="approvePlan()" style="flex:1">&#x2705; Approve &amp; Execute</button>
+        <button class="modal-btn secondary" onclick="rejectPlan()" style="flex:1">&#x270D; Reject &amp; Revise</button>
+      </div>
+      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
+        Approve turns Plan Mode off and lets the agent execute write tools. Reject keeps Plan Mode on and returns your feedback so the agent can revise.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hook Editor Modal -->
+<div class="modal-overlay" id="hookModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>&#x26A1; <span id="hookModalTitle">Add Hook</span></h3>
+      <button class="modal-close" onclick="closeHookModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Name</label>
+      <input type="text" id="hookName" placeholder="log-all-tools">
+      <label>Event</label>
+      <select id="hookEvent" style="width:100%;padding:8px 10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:12px">
+        <option value="pre_tool">pre_tool &mdash; before a tool runs (can block / modify input)</option>
+        <option value="post_tool">post_tool &mdash; after a tool runs (can modify output)</option>
+        <option value="on_error">on_error &mdash; tool returned an error (can recover)</option>
+        <option value="on_user_submit">on_user_submit &mdash; user sent a message (can block / rewrite)</option>
+        <option value="on_assistant_response">on_assistant_response &mdash; assistant finished a turn</option>
+        <option value="on_stop">on_stop &mdash; agent loop finished</option>
+      </select>
+      <label>Handler <span style="text-transform:none;color:var(--text-dim)">(JS body; receives <code>ctx</code>; see hints below)</span></label>
+      <textarea id="hookCode" spellcheck="false" style="min-height:160px;font-family:'JetBrains Mono',monospace" placeholder="// ctx has { name, input, output, toolUseId, isError, error, text, content, loopCount, totalTokens } depending on event.
+// Return values:
+//   { note: 'msg' }           -> logged to Memory panel
+//   { block: true, reason }   -> block the tool / user submit
+//   { overrideInput: {...} }  -> pre_tool: replace input
+//   { overrideOutput: '...' } -> post_tool / on_error: replace output
+//   { overrideText: '...' }   -> on_user_submit: rewrite text
+// Example:
+// if (ctx.name === 'Bash') return { block: true, reason: 'no bash' };"></textarea>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="hookEnabled" style="width:auto;margin:0" checked> Enabled</label>
+      <div id="hookModalStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="modal-btn primary" onclick="saveHookFromModal()" style="flex:1">&#x2705; Save</button>
+        <button class="modal-btn secondary" onclick="closeHookModal()" style="flex:1">Cancel</button>
+      </div>
+      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
+        Hooks run with the same power as JSExec. They can read and modify agent state. Errors in a hook are swallowed and logged &mdash; they never break the agent loop.
       </div>
     </div>
   </div>
@@ -1604,6 +1672,9 @@ let activeEntryId = null;
 let isGenerating = false;
 let abortCtrl = null;
 let loopCount = 0;
+// Per-conversation todos (TodoWrite tool) + session-only plan mode flag.
+let todos = [];
+let planMode = false;
 let totalTokens = 0;
 let contextTokens = 0;
 let currentViewFile = null;
@@ -1784,7 +1855,7 @@ async function saveCurrentConv(andRenderList) {
   }
   saveConvMeta();
   const html = chatEl.innerHTML;
-  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount });
+  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos });
   if (andRenderList) renderConvList();
   if (typeof schedulePush === 'function') schedulePush();
 }
@@ -1805,6 +1876,8 @@ function newConversation(skipSave) {
   totalTokens = 0;
   contextTokens = 0;
   currentViewFile = null;
+  todos = [];
+  if (typeof renderTodos === 'function') renderTodos();
   chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">New conversation. Upload files and type a task to begin.</div></div>';
   // Remount active skills
   for (const s of skills) { if (s.active) mountSkillToVfs(s); }
@@ -1843,6 +1916,8 @@ async function switchConversation(id, skipSave) {
   totalTokens = data?.totalTokens ?? meta.totalTokens ?? 0;
   contextTokens = data?.contextTokens ?? meta.contextTokens ?? 0;
   currentViewFile = null;
+  todos = Array.isArray(data?.todos) ? data.todos : [];
+  if (typeof renderTodos === 'function') renderTodos();
   if (data?.chatHTML) chatEl.innerHTML = data.chatHTML;
   else chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation loaded.</div></div>';
   // Batch remount skills — single renderFileTree at the end
@@ -3036,6 +3111,29 @@ function renderSkills() {
       <span class="s-icon">${esc(s.icon)}</span>
       <span class="s-name">${esc(s.name)}${ver}${badge}</span>
       <span class="s-remove" onclick="event.stopPropagation();removeSkill('${s.id}')" title="Remove">&times;</span>
+    </div>`;
+  }).join('');
+}
+
+function renderTodos() {
+  const el = document.getElementById('todosArea');
+  const counts = document.getElementById('todoCounts');
+  if (!el) return;
+  if (!todos || !todos.length) {
+    el.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:6px">No tasks yet. The agent will populate this when working on multi-step requests.</div>';
+    if (counts) counts.textContent = '';
+    return;
+  }
+  const done = todos.filter(t => t.status === 'completed').length;
+  if (counts) counts.textContent = done + '/' + todos.length;
+  el.innerHTML = todos.map(t => {
+    const icon = t.status === 'completed' ? '&#x2714;' : t.status === 'in_progress' ? '&#x25B6;' : '&#x25CB;';
+    const color = t.status === 'completed' ? 'var(--accent-green,#00ff88)' : t.status === 'in_progress' ? 'var(--accent-orange)' : 'var(--text-dim)';
+    const textStyle = t.status === 'completed' ? 'text-decoration:line-through;color:var(--text-dim)' : t.status === 'in_progress' ? 'color:var(--text-primary);font-weight:600' : 'color:var(--text-secondary)';
+    const label = t.status === 'in_progress' ? (t.activeForm || t.content) : t.content;
+    return `<div class="todo-item" style="display:flex;align-items:flex-start;gap:6px;padding:4px 6px;font-size:11px;border-bottom:1px solid var(--border)">
+      <span style="color:${color};flex:none;margin-top:1px">${icon}</span>
+      <span style="flex:1;${textStyle};word-break:break-word">${esc(label)}</span>
     </div>`;
   }).join('');
 }
@@ -4468,6 +4566,60 @@ function schedulePush() {
   }, 10000);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// PLAN MODE — writes blocked; model plans first, user approves via ExitPlanMode
+// ═══════════════════════════════════════════════════════════════════
+function togglePlanMode() {
+  planMode = !planMode;
+  renderPlanButton();
+  appendSystemMsg(planMode
+    ? '\u{1F4CB} Plan Mode ON \u2014 write tools blocked. The agent should explore, then call ExitPlanMode with a plan for your approval.'
+    : '\u{1F4CB} Plan Mode OFF \u2014 all tools available.');
+}
+function renderPlanButton() {
+  const btn = document.getElementById('planBtn');
+  if (!btn) return;
+  if (planMode) {
+    btn.style.background = 'var(--accent-orange)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--accent-orange)';
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }
+}
+
+let _planModalResolver = null;
+function showPlanApprovalModal(plan) {
+  return new Promise(resolve => {
+    _planModalResolver = resolve;
+    const overlay = document.getElementById('planModal');
+    const body = document.getElementById('planModalBody');
+    const fb = document.getElementById('planModalFeedback');
+    if (fb) fb.value = '';
+    if (body) {
+      // Render plan text as markdown if marked is available, else escape.
+      if (typeof marked !== 'undefined' && marked.parse) {
+        try { body.innerHTML = marked.parse(plan); }
+        catch { body.textContent = plan; }
+      } else {
+        body.textContent = plan;
+      }
+    }
+    overlay.classList.add('show');
+  });
+}
+function _closePlanModal(result) {
+  document.getElementById('planModal').classList.remove('show');
+  if (_planModalResolver) { _planModalResolver(result); _planModalResolver = null; }
+}
+function approvePlan() { _closePlanModal({ approved: true }); }
+function rejectPlan() {
+  const fb = document.getElementById('planModalFeedback');
+  _closePlanModal({ approved: false, feedback: (fb?.value || '').trim() });
+}
+
 function addMcpTool() {
   const name = document.getElementById('mcpToolName').value.trim();
   if (!name) { alert('Tool name is required'); return; }
@@ -4568,6 +4720,8 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'JSExec', description: 'Execute JavaScript code in an in-browser sandbox. Has direct access to the virtual filesystem via vfsRead/vfsWrite for text, vfsReadBinary/vfsWriteBinary for binary data, vfsStat for metadata, plus vfsGlob/vfsGrep. Can use fetch() for HTTP requests and console.log for output.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'JavaScript code to execute. Available APIs: vfsRead(path), vfsWrite(path,content), vfsReadBinary(path), vfsWriteBinary(path,bytes), vfsStat(path), vfsGlob(pattern), vfsGrep(pattern,path), fetch().' } }, required: ['code'] } },
   { name: 'WebSearch', description: 'Search the web using Tavily AI. Returns titles, URLs, and content snippets for relevant results. Requires a Tavily API key configured in the Web Search panel on the right sidebar.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, search_depth: { type: 'string', enum: ['basic', 'advanced'], description: 'Search depth: basic (fast) or advanced (thorough). Defaults to panel setting.' }, max_results: { type: 'integer', description: 'Maximum results to return (1-10). Defaults to panel setting.' }, include_domains: { type: 'array', items: { type: 'string' }, description: 'Restrict results to these domains (optional).' }, exclude_domains: { type: 'array', items: { type: 'string' }, description: 'Exclude these domains from results (optional).' } }, required: ['query'] } },
   { name: 'Fetch', description: 'Fetch a webpage by URL and return readable page content. Useful for retrieving the contents of a specific web page.', input_schema: { type: 'object', properties: { url: { type: 'string', description: 'HTTP or HTTPS URL to fetch' }, max_chars: { type: 'integer', description: 'Maximum number of characters to return from the cleaned page text. Default 12000.' } }, required: ['url'] } },
+  { name: 'TodoWrite', description: 'Maintain a user-visible task list for the current session. Use this proactively on multi-step work so the user can track progress. Each todo has: content (imperative form, e.g. "Run tests"), activeForm (present continuous, e.g. "Running tests"), status (pending | in_progress | completed). Exactly one task should be in_progress at a time. Update the full list on every change; this tool overwrites the prior list.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string', description: 'Imperative description of the task.' }, activeForm: { type: 'string', description: 'Present-continuous description shown while in progress.' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Task status.' } }, required: ['content', 'activeForm', 'status'] } } }, required: ['todos'] } },
+  { name: 'ExitPlanMode', description: 'Call this ONLY while Plan Mode is active and your plan is ready for user approval. Pass the full plan as Markdown. The user gets an Approve/Reject dialog. If approved, Plan Mode exits and you may execute write tools on the next turn. If rejected, you receive the user\'s feedback and must revise the plan while staying in Plan Mode.', input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'Complete, reviewable plan in Markdown.' } }, required: ['plan'] } },
 ];
 
 let allToolsAnthropic = [...BASE_TOOLS_ANTHROPIC];
@@ -4575,6 +4729,104 @@ let allToolsOpenAI = [];
 let skillToolHandlers = {};
 let disabledTools = new Set();
 try { const dt = localStorage.getItem('ba_disabled_tools'); if (dt) disabledTools = new Set(JSON.parse(dt)); } catch {}
+
+// ═══════════════════════════════════════════════════════════════════
+// HOOKS RUNTIME — user-defined JS handlers for agent lifecycle events
+// Events: pre_tool | post_tool | on_error | on_user_submit | on_assistant_response | on_stop
+// Hook record: { id, name, event, code, enabled }
+// ═══════════════════════════════════════════════════════════════════
+const HOOKS_KEY = 'ba_hooks';
+const HOOK_EVENTS = ['pre_tool', 'post_tool', 'on_error', 'on_user_submit', 'on_assistant_response', 'on_stop'];
+let hooks = [];
+try { const s = localStorage.getItem(HOOKS_KEY); if (s) hooks = JSON.parse(s) || []; } catch {}
+
+function saveHooks() {
+  try { localStorage.setItem(HOOKS_KEY, JSON.stringify(hooks)); } catch (e) { console.warn('saveHooks failed', e); }
+}
+function genHookId() { return 'hook_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+async function runHooks(event, ctx) {
+  const matching = hooks.filter(h => h.event === event && h.enabled);
+  for (const h of matching) {
+    try {
+      const fn = new Function('ctx', h.code || '');
+      const ret = await fn(ctx);
+      if (!ret || typeof ret !== 'object') continue;
+      if (ret.note) { if (typeof logMemEntry === 'function') logMemEntry('hook', `[${h.name}] ${ret.note}`); }
+      if (ret.block) { ctx._blocked = { by: h.name, reason: ret.reason || 'blocked by hook' }; return ctx; }
+      if (ret.overrideInput && typeof ret.overrideInput === 'object') ctx.input = ret.overrideInput;
+      if (Object.prototype.hasOwnProperty.call(ret, 'overrideOutput')) ctx.output = ret.overrideOutput;
+      if (typeof ret.overrideText === 'string') ctx.text = ret.overrideText;
+    } catch (e) {
+      if (typeof logMemEntry === 'function') logMemEntry('hook-error', `[${h.name}] ${e.message}`);
+      console.warn('Hook error', h.name, e);
+    }
+  }
+  return ctx;
+}
+
+let _editingHookId = null;
+function openHookModal(id) {
+  _editingHookId = id || null;
+  const h = id ? hooks.find(x => x.id === id) : null;
+  document.getElementById('hookModalTitle').textContent = h ? 'Edit Hook' : 'Add Hook';
+  document.getElementById('hookName').value = h?.name || '';
+  document.getElementById('hookEvent').value = h?.event || 'pre_tool';
+  document.getElementById('hookCode').value = h?.code || '';
+  document.getElementById('hookEnabled').checked = h ? !!h.enabled : true;
+  document.getElementById('hookModalStatus').textContent = '';
+  document.getElementById('hookModal').classList.add('show');
+}
+function closeHookModal() { document.getElementById('hookModal').classList.remove('show'); _editingHookId = null; }
+function saveHookFromModal() {
+  const name = document.getElementById('hookName').value.trim();
+  const event = document.getElementById('hookEvent').value;
+  const code = document.getElementById('hookCode').value;
+  const enabled = document.getElementById('hookEnabled').checked;
+  const status = document.getElementById('hookModalStatus');
+  if (!name) { status.textContent = '\u26A0 Name is required.'; return; }
+  if (!HOOK_EVENTS.includes(event)) { status.textContent = '\u26A0 Invalid event.'; return; }
+  try { new Function('ctx', code); }
+  catch (e) { status.textContent = '\u26A0 Syntax error: ' + e.message; return; }
+  if (_editingHookId) {
+    const i = hooks.findIndex(h => h.id === _editingHookId);
+    if (i >= 0) hooks[i] = { ...hooks[i], name, event, code, enabled };
+  } else {
+    hooks.push({ id: genHookId(), name, event, code, enabled });
+  }
+  saveHooks();
+  renderHooks();
+  closeHookModal();
+}
+function deleteHook(id) {
+  if (!confirm('Delete this hook?')) return;
+  hooks = hooks.filter(h => h.id !== id);
+  saveHooks();
+  renderHooks();
+}
+function toggleHookEnabled(id) {
+  const h = hooks.find(x => x.id === id);
+  if (!h) return;
+  h.enabled = !h.enabled;
+  saveHooks();
+  renderHooks();
+}
+function renderHooks() {
+  const el = document.getElementById('hooksArea');
+  if (!el) return;
+  if (!hooks.length) {
+    el.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:6px">No hooks yet. Click <b>+ Add</b> to create one.</div>';
+    return;
+  }
+  el.innerHTML = hooks.map(h => `
+    <div class="hook-item" style="display:flex;align-items:center;gap:6px;cursor:default">
+      <input type="checkbox" ${h.enabled ? 'checked' : ''} onchange="toggleHookEnabled('${h.id}')" title="Enable/disable" style="margin:0;cursor:pointer">
+      <span class="h-icon">&#x26A1;</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;${h.enabled ? '' : 'opacity:0.5;'}" onclick="openHookModal('${h.id}')" title="Edit">${esc(h.name)} <span style="color:var(--text-dim);font-size:10px">${esc(h.event)}</span></span>
+      <button class="skill-install-btn" style="flex:none;margin:0;padding:2px 6px;font-size:10px" onclick="deleteHook('${h.id}')" title="Delete">&times;</button>
+    </div>
+  `).join('');
+}
 
 function toggleToolEnabled(name) {
   if (disabledTools.has(name)) disabledTools.delete(name); else disabledTools.add(name);
@@ -4614,8 +4866,17 @@ function renderToolsGrid() {
 // ═══════════════════════════════════════════════════════════════════
 // TOOL IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════
+// Plan Mode: writes are blocked, read-only tools and meta-tools are allowed.
+const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'JSExec']);
+
 async function executeTool(name, input) {
   try {
+    if (planMode && name !== 'ExitPlanMode' && name !== 'TodoWrite') {
+      const isMcp = mcpTools.find(t => t.name === name);
+      if (PLAN_MODE_WRITE_TOOLS.has(name) || isMcp) {
+        return `Error: Plan Mode is active. The tool "${name}" is blocked. Finish gathering information with read-only tools (Read / Glob / Grep / WebSearch / Fetch) and call ExitPlanMode when your plan is ready for user approval.`;
+      }
+    }
     logMemEntry('read', `Tool: ${name}`);
     flashTool(name);
     switch (name) {
@@ -4629,6 +4890,8 @@ async function executeTool(name, input) {
       case 'JSExec': return await toolJSExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
+      case 'TodoWrite': return toolTodoWrite(input);
+      case 'ExitPlanMode': return await toolExitPlanMode(input);
       default:
         // Skill tool?
         if (skillToolHandlers[name]) {
@@ -4758,6 +5021,34 @@ async function toolFetch(input) {
   } catch (e) {
     return `Fetch error: ${e.message}`;
   }
+}
+
+function toolTodoWrite(input) {
+  if (!input || !Array.isArray(input.todos)) return 'Error: todos must be an array of {content, activeForm, status}.';
+  const valid = ['pending', 'in_progress', 'completed'];
+  todos = input.todos.map((t, i) => ({
+    id: 'td_' + i,
+    content: String(t.content || '').slice(0, 500),
+    activeForm: String(t.activeForm || t.content || '').slice(0, 500),
+    status: valid.includes(t.status) ? t.status : 'pending'
+  }));
+  if (typeof renderTodos === 'function') renderTodos();
+  saveCurrentConv();
+  const counts = todos.reduce((a, t) => { a[t.status] = (a[t.status] || 0) + 1; return a; }, {});
+  return `Todos updated: ${counts.completed || 0} done, ${counts.in_progress || 0} in progress, ${counts.pending || 0} pending.`;
+}
+
+async function toolExitPlanMode(input) {
+  if (!planMode) return 'Error: Plan Mode is not active. You do not need to call ExitPlanMode.';
+  const plan = String(input?.plan || '').trim();
+  if (!plan) return 'Error: "plan" is required and must be the full plan as Markdown.';
+  const verdict = await showPlanApprovalModal(plan);
+  if (verdict.approved) {
+    planMode = false;
+    if (typeof renderPlanButton === 'function') renderPlanButton();
+    return 'Plan approved by user. Plan Mode has been disabled. You may now execute write tools to implement the plan.';
+  }
+  return `Plan rejected by user. Feedback:\n${verdict.feedback || '(no feedback given)'}\n\nStay in Plan Mode and revise the plan, then call ExitPlanMode again.`;
 }
 
 async function wsTestSearch() {
@@ -5609,7 +5900,8 @@ function getUserTextFromContent(content) {
   return content.filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n\n').trim();
 }
 function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
-  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr();
+  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + planPrompt;
   rebuildToolDefs(headId);
   if (PROVIDER === 'anthropic') {
     return {
@@ -5755,6 +6047,20 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
 // ═══════════════════════════════════════════════════════════════════
 async function agentLoop(userContent, displayText, fileList, usedSkills) {
   const usedSkillNames = (usedSkills || []).map(sk => sk.name).filter(Boolean);
+  // on_user_submit hook: may block or rewrite the user's text
+  const userTextPre = getUserTextFromContent(userContent) || displayText || '';
+  const submitCtx = await runHooks('on_user_submit', { text: userTextPre, files: fileList || [], usedSkills: usedSkillNames });
+  if (submitCtx._blocked) { appendSystemMsg(`\u26A0 Blocked by hook [${submitCtx._blocked.by}]: ${submitCtx._blocked.reason}`); return; }
+  if (typeof submitCtx.text === 'string' && submitCtx.text !== userTextPre) {
+    // Replace the first text block in userContent with the rewritten text.
+    if (Array.isArray(userContent)) {
+      const textBlock = userContent.find(b => b && b.type === 'text');
+      if (textBlock) textBlock.text = submitCtx.text;
+      else userContent.unshift({ type: 'text', text: submitCtx.text });
+    } else if (typeof userContent === 'string') {
+      userContent = submitCtx.text;
+    }
+  }
   const userEntry = appendSessionEntry('message', { role: 'user', content: userContent, usedSkillNames });
   rebuildConversation();
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
@@ -5928,12 +6234,32 @@ async function _runAgentLoop(userText, options = {}) {
       rebuildConversation();
       msgEl.dataset.assistantEntryId = assistantEntry.id;
       updateMemoryUI();
+      await runHooks('on_assistant_response', { content: result.content, loopCount, stopReason: result.stop_reason });
       const tus = result.content.filter(b => b.type === 'tool_use');
       if (tus.length) {
         const trs = [];
         for (const [toolOrder, tu] of tus.entries()) {
           const liveEntry = _toolMap[tu.index ?? toolOrder];
-          const out = await executeTool(tu.name, tu.input); const isErr = typeof out === 'string' && out.startsWith('Error:');
+          // Pre-tool hook: may block, or override input
+          let effectiveInput = tu.input;
+          const preCtx = await runHooks('pre_tool', { name: tu.name, input: tu.input, toolUseId: tu.id });
+          if (preCtx._blocked) {
+            const blocked = `Error: blocked by hook [${preCtx._blocked.by}]: ${preCtx._blocked.reason}`;
+            appendToolCard(msgEl, tu, blocked, true, liveEntry?.el || null);
+            trs.push(PROVIDER === 'anthropic' ? { type: 'tool_result', tool_use_id: tu.id, content: blocked, is_error: true } : { type: 'tool_result', tool_use_id: tu.id, content: blocked });
+            continue;
+          }
+          if (preCtx.input && typeof preCtx.input === 'object') effectiveInput = preCtx.input;
+          let out = await executeTool(tu.name, effectiveInput);
+          let isErr = typeof out === 'string' && out.startsWith('Error:');
+          // On-error or post-tool hook: may override output
+          if (isErr) {
+            const errCtx = await runHooks('on_error', { name: tu.name, input: effectiveInput, output: out, toolUseId: tu.id, error: out });
+            if (Object.prototype.hasOwnProperty.call(errCtx, 'output') && errCtx.output !== out) { out = errCtx.output; isErr = typeof out === 'string' && out.startsWith('Error:'); }
+          } else {
+            const postCtx = await runHooks('post_tool', { name: tu.name, input: effectiveInput, output: out, toolUseId: tu.id, isError: false });
+            if (Object.prototype.hasOwnProperty.call(postCtx, 'output') && postCtx.output !== out) { out = postCtx.output; isErr = typeof out === 'string' && out.startsWith('Error:'); }
+          }
           appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null);
           trs.push(PROVIDER === 'anthropic' ? { type: 'tool_result', tool_use_id: tu.id, content: out, is_error: isErr || undefined } : { type: 'tool_result', tool_use_id: tu.id, content: out });
         }
@@ -5949,6 +6275,7 @@ async function _runAgentLoop(userText, options = {}) {
     }
   } catch (e) { if (e.name !== 'AbortError') appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
   isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', 'Ready'); updateMemoryUI(); saveCurrentConv(true);
+  try { await runHooks('on_stop', { loopCount, totalTokens, stoppedBy: abortCtrl === null ? 'done' : 'abort' }); } catch {}
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -6775,6 +7102,8 @@ marked.setOptions({ gfm: true, breaks: true });
   await loadConvHistory();
   updateMemoryUI();
   loadWsConfig();
+  renderHooks();
+  renderTodos();
 
   // Load API keys from localStorage settings (instead of /config endpoint)
   try {

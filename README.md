@@ -33,6 +33,9 @@ OnePagent is a **single-file, zero-build, browser-native** AI agent workbench. O
 - **Multi-provider LLM** — Built-in support for Anthropic, OpenAI, DeepSeek, and any custom endpoint. Keys are injected by a Service Worker, never leak into URLs or logs.
 - **Long context with auto-compaction** — Per-model context-window configuration; when approaching the limit, an LLM summarizer compresses history while preserving key decisions and code changes.
 - **Tools & MCP** — File I/O, shell, code-gen, and form rendering are exposed as tools. Add your own MCP tools via URL endpoint or in-browser JS handler.
+- **📋 Plan Mode** — Toggle a "plan-first" workflow: agent uses read-only tools to investigate, drafts a plan, waits for your approval, then executes. Writes (`Write` / `Edit` / `Bash` / `PythonExec` / `JSExec` / MCP) are blocked until approval.
+- **✅ TodoWrite** — A `TodoWrite` built-in tool the agent calls to maintain a user-visible, per-conversation task list (pending / in-progress / completed). See multi-step progress at a glance.
+- **⚡ Hooks runtime** — User-defined JS handlers on agent lifecycle events (`pre_tool`, `post_tool`, `on_error`, `on_user_submit`, `on_assistant_response`, `on_stop`). Can block, modify input/output, or log. Same power level as JSExec.
 - **Python sandbox** — Execute Python snippets right in the browser via Pyodide, no server needed.
 - **Web Search** — Tavily integration with `basic` / `advanced` depth modes; results are fed directly to the agent.
 - **Skills system** — Install `.skill` / `.zip` packs, pull from GitHub, or create in-page. Each skill carries its own prompt + tools.
@@ -226,6 +229,64 @@ AWS S3 · Cloudflare R2 · Backblaze B2 · MinIO · any server speaking the S3 A
 
 ---
 
+## Agentic Features
+
+### 📋 Plan Mode
+
+Click **📋 Plan** in the top bar to toggle. When active:
+
+- System prompt tells the model: *use read-only tools to investigate, then call `ExitPlanMode` with a Markdown plan.*
+- `executeTool` blocks `Write` / `Edit` / `Bash` / `PythonExec` / `JSExec` and every MCP tool. Allowed: `Read`, `Glob`, `Grep`, `WebSearch`, `Fetch`, `TodoWrite`, `ExitPlanMode`.
+- When the model calls `ExitPlanMode`, a review modal appears with the plan rendered as Markdown.
+  - **Approve** → Plan Mode turns off, the next turn can execute writes.
+  - **Reject** → your feedback goes back to the model, Plan Mode stays on, the model revises.
+
+Plan Mode is session-only; a page reload resets it to off.
+
+### ✅ TodoWrite
+
+A built-in tool that the agent calls proactively on multi-step tasks. Each todo has `content` (imperative, e.g. *"Run tests"*), `activeForm` (present continuous, *"Running tests"*), and `status` ∈ `pending | in_progress | completed`.
+
+The **TODOS** panel on the right sidebar shows an `X/Y` progress badge, an icon per status (○ / ▶ / ✓), and strikethrough on done. State is per-conversation and rides existing S3 sync.
+
+### ⚡ Hooks
+
+User-defined JavaScript handlers that fire on agent lifecycle events.
+
+| Event | `ctx` fields | Return values |
+|---|---|---|
+| `pre_tool` | `name`, `input`, `toolUseId` | `{ block, reason }` / `{ overrideInput }` / `{ note }` |
+| `post_tool` | `name`, `input`, `output`, `toolUseId`, `isError` | `{ overrideOutput }` / `{ note }` |
+| `on_error` | `name`, `input`, `output`, `error`, `toolUseId` | `{ overrideOutput }` (recover) / `{ note }` |
+| `on_user_submit` | `text`, `files`, `usedSkills` | `{ block, reason }` / `{ overrideText }` / `{ note }` |
+| `on_assistant_response` | `content`, `loopCount`, `stopReason` | `{ note }` |
+| `on_stop` | `loopCount`, `totalTokens`, `stoppedBy` | `{ note }` |
+
+Errors inside a hook are swallowed and logged to the Memory panel — they never break the agent loop. Hooks are global (live in `localStorage.ba_hooks`), apply to every conversation.
+
+**Example** — block all Bash calls:
+```js
+if (ctx.name === 'Bash') {
+  return { block: true, reason: 'no bash allowed in this project' };
+}
+```
+
+**Example** — uppercase every Read result:
+```js
+if (ctx.name === 'Read' && typeof ctx.output === 'string') {
+  return { overrideOutput: ctx.output.toUpperCase() };
+}
+```
+
+**Example** — audit every tool call to the Memory panel:
+```js
+return { note: ctx.name + ' → ' + JSON.stringify(ctx.input).slice(0, 80) };
+```
+
+Open the **HOOKS** panel on the right sidebar → **+ Add** → pick an event, paste handler, Save.
+
+---
+
 ## Configuration
 
 ### Where is my state?
@@ -242,6 +303,7 @@ All configuration and conversation data lives in the browser. Lightweight keys g
 | `ba_skills` | Skill metadata (files live in IDB) |
 | `ba_mcp_tools` | Custom MCP tool definitions |
 | `ba_disabled_tools` | Tool on/off state |
+| `ba_hooks` | User-defined lifecycle hook handlers |
 | `ba_s3_sync` | S3 bucket config (endpoint, creds, passphrase) |
 | `ba_s3_last_sync` | Last successful sync timestamp |
 | `ba_s3_last_pass_hash` | Hash of last-known passphrase (detects rotation) |
@@ -293,6 +355,9 @@ Message rendering uses the inlined **Pretext engine** — canvas-based precise t
 - [x] Skill marketplace (community skill aggregator)
 - [x] IndexedDB conversation archive (bypass localStorage limits)
 - [x] Cloud Sync to S3-compatible buckets (incremental, content-addressed, optional E2E encryption)
+- [x] Plan Mode (write-gated, exploration-friendly, Markdown plan approval)
+- [x] TodoWrite tool + per-conversation task list panel
+- [x] Real Hooks runtime (6 lifecycle events, full JS power, block / modify / log)
 - [ ] Global memory system (cross-conversation long-term recall)
 - [ ] Local models (via `window.ai` / WebGPU)
 
