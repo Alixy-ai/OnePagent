@@ -2998,12 +2998,50 @@ function renderSkills() {
   }).join('');
 }
 
-// Progressive loading: L1 = metadata (always), L2 = body (on trigger), L3 = references (on demand)
-function getActiveSkillPrompts() {
-  return skills.filter(s => s.active && s.body).map(s => {
-    let prompt = `\n\n## Skill: ${s.name}\nFiles at: /skills/${s.name}/\n\n${s.body}`;
-    // List key subdirectories
-    const allFiles = Object.keys(s.files || {});
+// Progressive loading: L1 = metadata (always), L2 = body (only for triggered skills), L3 = references (on demand)
+function getActiveSkillMetadataPrompts() {
+  const activeSkills = skills.filter(s => s.active);
+  if (!activeSkills.length) return '';
+  const lines = activeSkills.map(s => {
+    const parts = [`- /${s.name}: ${s.description || 'No description provided.'}`];
+    if (s.trigger) parts.push(`  Trigger: ${s.trigger}`);
+    parts.push(`  Files: /skills/${s.name}/`);
+    const toolNames = (s.tools || []).map(t => t.name).filter(Boolean);
+    if (toolNames.length) parts.push(`  Tools on invocation: ${toolNames.join(', ')}`);
+    return parts.join('\n');
+  });
+  return `\n\n## Available skills (metadata only)\nThe following installed skills are available. Their full instructions are only loaded when that skill is explicitly invoked for the current request.\n\n${lines.join('\n')}`;
+}
+function getTriggeredSkillNames(headId = activeEntryId) {
+  const byId = new Map(sessionEntries.map(entry => [entry.id, entry]));
+  const names = [];
+  for (const item of buildProjectedConversation(headId)) {
+    const entry = byId.get(item.entryId);
+    if (!entry) continue;
+    if (Array.isArray(entry.usedSkillNames)) {
+      for (const name of entry.usedSkillNames) {
+        if (typeof name === 'string' && !names.includes(name)) names.push(name);
+      }
+      continue;
+    }
+    const text = getUserTextFromContent(entry.content || '');
+    const matches = [...text.matchAll(/\[IMPORTANT: The "([^"]+)" skill has been invoked for this request\./g)];
+    for (const match of matches) {
+      const name = match[1];
+      if (name && !names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
+function getTriggeredSkills(headId = activeEntryId) {
+  return getTriggeredSkillNames(headId).map(name => skills.find(s => s.name === name)).filter(Boolean);
+}
+function getTriggeredSkillPrompts(headId = activeEntryId) {
+  return getTriggeredSkills(headId).filter(s => s.body).map(s => {
+    let prompt = `\n\n## Skill: ${s.name}\n`;
+    prompt += s.active ? `Files at: /skills/${s.name}/\n\n` : 'Loaded for this request only.\n\n';
+    prompt += s.body;
+    const allFiles = s.active ? Object.keys(s.files || {}) : [];
     if (allFiles.length) {
       const dirs = [...new Set(allFiles.map(f => f.split('/')[0]))].filter(Boolean);
       prompt += `\n\n**Skill contents** (\`/skills/${s.name}/\`): ${dirs.join(', ')} (${allFiles.length} files)`;
@@ -3011,9 +3049,20 @@ function getActiveSkillPrompts() {
     return prompt;
   }).join('');
 }
-function getActiveSkillTools() {
+function getTriggeredSkillTools(headId = activeEntryId) {
   const tools = [];
-  for (const s of skills) { if (!s.active || !s.tools) continue; for (const t of s.tools) tools.push({ ...t, _skillId: s.id }); }
+  for (const s of getTriggeredSkills(headId)) {
+    if (!s.tools) continue;
+    for (const t of s.tools) tools.push({ ...t, _skillId: s.id });
+  }
+  return tools;
+}
+function getAllSkillTools() {
+  const tools = [];
+  for (const s of skills) {
+    if (!s.tools) continue;
+    for (const t of s.tools) tools.push({ ...t, _skillId: s.id, _skillActive: s.active });
+  }
   return tools;
 }
 // L3: On-demand reference loading (called by Read tool when path starts with @skill:)
@@ -3671,12 +3720,14 @@ function toggleToolEnabled(name) {
 function getEnabledToolsAnthropic() { return allToolsAnthropic.filter(t => !disabledTools.has(t.name)); }
 function getEnabledToolsOpenAI() { return allToolsOpenAI.filter(t => !disabledTools.has(t.function.name)); }
 
-function rebuildToolDefs() {
+function rebuildToolDefs(headId = activeEntryId) {
   allToolsAnthropic = [...BASE_TOOLS_ANTHROPIC];
   skillToolHandlers = {};
-  for (const st of getActiveSkillTools()) {
-    allToolsAnthropic.push({ name: st.name, description: st.description || '', input_schema: st.parameters || { type: 'object', properties: {}, required: [] } });
+  for (const st of getAllSkillTools()) {
     if (st.handler) skillToolHandlers[st.name] = st.handler;
+  }
+  for (const st of getTriggeredSkillTools(headId)) {
+    allToolsAnthropic.push({ name: st.name, description: st.description || '', input_schema: st.parameters || { type: 'object', properties: {}, required: [] } });
   }
   // Add MCP tools
   for (const mt of mcpTools) {
@@ -4693,8 +4744,9 @@ function getUserTextFromContent(content) {
   if (!Array.isArray(content)) return '';
   return content.filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n\n').trim();
 }
-function buildRequestBody(messages = buildConversationFromEntries()) {
-  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillPrompts() + getBeijingTimeStr();
+function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
+  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr();
+  rebuildToolDefs(headId);
   if (PROVIDER === 'anthropic') {
     return {
       model: API_MODEL,
@@ -4838,7 +4890,8 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
 // AGENT LOOP
 // ═══════════════════════════════════════════════════════════════════
 async function agentLoop(userContent, displayText, fileList, usedSkills) {
-  const userEntry = appendSessionEntry('message', { role: 'user', content: userContent });
+  const usedSkillNames = (usedSkills || []).map(sk => sk.name).filter(Boolean);
+  const userEntry = appendSessionEntry('message', { role: 'user', content: userContent, usedSkillNames });
   rebuildConversation();
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
   const userText = getUserTextFromContent(userContent) || displayText || '';
@@ -5618,7 +5671,7 @@ function buildUserMessageContent(text, filePaths, usedSkills) {
     if (!sk.active && sk.body) {
       textParts.push(`<skill_instruction>\nYou MUST use the following skill to complete this task.\n\n## Skill: ${sk.name}\n${sk.body}\n</skill_instruction>`);
     } else {
-      textParts.push(`[IMPORTANT: Use the "${sk.name}" skill instructions from your system prompt to complete this task. Follow the skill's guidelines and use its tools/files at /skills/${sk.name}/ if available.]`);
+      textParts.push(`[IMPORTANT: The "${sk.name}" skill has been invoked for this request. Use its loaded instructions and any files/tools under /skills/${sk.name}/.]`);
     }
   }
   if (text) textParts.push(text);
