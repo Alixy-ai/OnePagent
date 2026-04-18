@@ -120,17 +120,17 @@ npx serve .
 
 ### Where is my state?
 
-所有配置与会话数据保存在浏览器的 `localStorage`：
+配置与会话数据全部留在浏览器本地。轻量项存 `localStorage`，完整会话历史（消息、VFS、渲染 HTML、元数据）存在 **IndexedDB**（数据库 `ba_conversations`，对象存储 `data` / `meta`），不受 localStorage 5–10 MB 容量限制。
 
-| Key | 内容 |
+| localStorage Key | 内容 |
 |---|---|
 | `ba_settings` | Provider / Endpoint / Keys / Models / Context Lengths |
 | `ba_selected_model` | 当前选中模型 |
+| `ba_active_conv` | 上次打开的会话 id |
 | `ba_ws_config` | Tavily 搜索深度与结果数 |
 | `ba_theme` | `dark` / `light` |
-| `ba_conv_*` | 会话历史 |
 
-数据**不会**上传任何第三方服务器。清理浏览器数据 = 清零 OnePagent。
+数据**不会**上传任何第三方服务器。清理浏览器数据（localStorage + IndexedDB）= 清零 OnePagent。
 
 ### Privacy Model
 
@@ -169,7 +169,7 @@ return 'Echo: ' + input.text;
 ## Roadmap
 
 - [ ] 插件市场（社区 Skills 聚合）
-- [ ] IndexedDB 会话归档（替换 localStorage 上限）
+- [x] IndexedDB 会话归档（替换 localStorage 上限）
 - [ ] WebRTC 多端同步
 - [ ] 本地模型（via `window.ai` / WebGPU）
 

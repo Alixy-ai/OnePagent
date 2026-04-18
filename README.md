@@ -120,17 +120,17 @@ Takes effect immediately — no reload needed.
 
 ### Where is my state?
 
-All configuration and conversation data lives in the browser's `localStorage`:
+All configuration and conversation data lives in the browser. Lightweight keys go to `localStorage`; full conversation history (messages, VFS, rendered HTML, metadata) lives in **IndexedDB** (database `ba_conversations`, stores `data` / `meta`), so there is no 5–10 MB localStorage cap.
 
-| Key | Contents |
+| localStorage Key | Contents |
 |---|---|
 | `ba_settings` | Provider / Endpoint / Keys / Models / Context Lengths |
 | `ba_selected_model` | Currently-selected model |
+| `ba_active_conv` | Last-opened conversation id |
 | `ba_ws_config` | Tavily search depth & result count |
 | `ba_theme` | `dark` / `light` |
-| `ba_conv_*` | Conversation history |
 
-Data is **never** uploaded to any third-party server. Clearing browser data = resetting OnePagent.
+Data is **never** uploaded to any third-party server. Clearing browser data (localStorage + IndexedDB) = resetting OnePagent.
 
 ### Privacy Model
 
@@ -169,7 +169,7 @@ Message rendering uses the inlined **Pretext engine** — canvas-based precise t
 ## Roadmap
 
 - [ ] Skill marketplace (community skill aggregator)
-- [ ] IndexedDB conversation archive (bypass localStorage limits)
+- [x] IndexedDB conversation archive (bypass localStorage limits)
 - [ ] WebRTC multi-device sync
 - [ ] Local models (via `window.ai` / WebGPU)
 
