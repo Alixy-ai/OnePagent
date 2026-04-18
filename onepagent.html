@@ -935,6 +935,14 @@ document.addEventListener('DOMContentLoaded', function() {
       <button class="top-btn hide-mobile" onclick="clearConversation()">Clear</button>
       <button class="top-btn hide-mobile" onclick="runFsDiagnostics()">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()">Export</button>
+      <span style="position:relative;display:inline-block">
+        <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket">&#x2601; Sync</button>
+        <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:180px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
+          <button class="top-btn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; Push now</button>
+          <button class="top-btn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; Pull now</button>
+          <div id="syncStatus" style="font-size:10px;color:var(--text-dim);padding:4px 6px;border-top:1px solid var(--border);margin-top:4px">Not configured.</div>
+        </div>
+      </span>
       <button class="top-btn" onclick="openSettingsModal()" title="LLM & Tavily settings">&#x2699; Settings</button>
       <button class="top-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark theme">&#x263D; Dark</button>
     </div>
@@ -1239,12 +1247,43 @@ document.addEventListener('DOMContentLoaded', function() {
       <label>Tavily API Key <span style="text-transform:none;color:var(--text-dim)">(for Web Search)</span></label>
       <input type="password" id="setTavilyKey" placeholder="tvly-...">
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x2601; Cloud Sync <span style="text-transform:none;color:var(--text-dim);font-weight:400">(S3-compatible \u2014 AWS, R2, MinIO, B2)</span></label>
+      <label>Endpoint <span style="text-transform:none;color:var(--text-dim)">(e.g. https://s3.us-east-1.amazonaws.com)</span></label>
+      <input type="text" id="setS3Endpoint" placeholder="https://s3.us-east-1.amazonaws.com">
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">
+          <label>Region</label>
+          <input type="text" id="setS3Region" placeholder="us-east-1">
+        </div>
+        <div style="flex:1">
+          <label>Bucket</label>
+          <input type="text" id="setS3Bucket" placeholder="my-onepagent-bucket">
+        </div>
+      </div>
+      <label>Prefix <span style="text-transform:none;color:var(--text-dim)">(optional)</span></label>
+      <input type="text" id="setS3Prefix" placeholder="onepagent/">
+      <label>Access Key ID</label>
+      <input type="password" id="setS3AccessKey">
+      <label>Secret Access Key</label>
+      <input type="password" id="setS3SecretKey">
+      <label>Encryption Passphrase <span style="text-transform:none;color:var(--text-dim)">(optional; losing it = losing backup)</span></label>
+      <input type="password" id="setS3Passphrase">
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setS3AutoPush" style="width:auto;margin:0"> Auto-push on every change (10s debounce)</label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="setS3PathStyle" style="width:auto;margin:0" checked> Use path-style URLs (required for MinIO / R2)</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button type="button" class="modal-btn secondary" onclick="testS3Connection()" style="flex:1;padding:6px 10px;font-size:11px">Test connection</button>
+        <button type="button" class="modal-btn secondary" onclick="showCorsHint()" style="flex:1;padding:6px 10px;font-size:11px">Show CORS config</button>
+      </div>
+      <div id="s3Status" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
+
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="modal-btn primary" onclick="saveSettings()" style="flex:1">&#x2705; Save</button>
         <button class="modal-btn secondary" onclick="closeSettingsModal()" style="flex:1">Cancel</button>
       </div>
       <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
-        Settings are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints.
+        Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.
       </div>
     </div>
   </div>
@@ -1746,6 +1785,7 @@ async function saveCurrentConv(andRenderList) {
   const html = chatEl.innerHTML;
   await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount });
   if (andRenderList) renderConvList();
+  if (typeof schedulePush === 'function') schedulePush();
 }
 
 function newConversation(skipSave) {
@@ -2887,6 +2927,7 @@ function saveSkills() {
       saveSkillFilesToDB(s.name, { files: s.files || {}, binaryFiles: s.binaryFiles || {} });
     }
   }
+  if (typeof schedulePush === 'function') schedulePush();
 }
 
 // Parse SKILL.md: YAML frontmatter (---...---) + Markdown body
@@ -3490,6 +3531,17 @@ function openSettingsModal() {
   document.getElementById('setModelContexts').value = Object.entries(ctxs).map(([k, v]) => `${k}=${v}`).join('\n');
   document.getElementById('setTavilyKey').value = s.tavily_api_key || (_keys && _keys.tavily_api_key) || '';
   document.getElementById('setStatus').textContent = '';
+  const s3 = _loadS3Cfg() || {};
+  document.getElementById('setS3Endpoint').value = s3.endpoint || '';
+  document.getElementById('setS3Region').value = s3.region || 'us-east-1';
+  document.getElementById('setS3Bucket').value = s3.bucket || '';
+  document.getElementById('setS3Prefix').value = s3.prefix || 'onepagent/';
+  document.getElementById('setS3AccessKey').value = s3.accessKey || '';
+  document.getElementById('setS3SecretKey').value = s3.secretKey || '';
+  document.getElementById('setS3Passphrase').value = s3.passphrase || '';
+  document.getElementById('setS3AutoPush').checked = !!s3.autoPush;
+  document.getElementById('setS3PathStyle').checked = s3.forcePathStyle !== false;
+  document.getElementById('s3Status').textContent = '';
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('show'); }
@@ -3600,8 +3652,452 @@ async function saveSettings() {
   if (apiKey) {
     try { _swReady = await initServiceWorker(_keys); } catch (e) { console.warn(e); }
   }
+  _saveS3CfgFromModal();
   closeSettingsModal();
   appendSystemMsg('\u2705 Settings saved.');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CLOUD SYNC (S3-compatible): SigV4 signer + snapshot + UI
+// ═══════════════════════════════════════════════════════════════════
+const S3_SYNC_KEY = 'ba_s3_sync';
+const S3_LAST_SYNC_KEY = 'ba_s3_last_sync';
+const S3_SNAPSHOT_NAME_JSON = 'onepagent-snapshot.json';
+const S3_SNAPSHOT_NAME_BIN = 'onepagent-snapshot.bin';
+const _s3TE = new TextEncoder();
+const _s3TD = new TextDecoder();
+
+function _loadS3Cfg() {
+  try { const s = localStorage.getItem(S3_SYNC_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
+}
+function _writeS3Cfg(cfg) {
+  try { localStorage.setItem(S3_SYNC_KEY, JSON.stringify(cfg)); } catch {}
+}
+function _s3Configured(cfg) {
+  const c = cfg || _loadS3Cfg();
+  return !!(c && c.endpoint && c.bucket && c.accessKey && c.secretKey);
+}
+function _s3BytesToHex(bytes) {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+function _s3UriEncode(str, encodeSlash) {
+  let out = '';
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (/[A-Za-z0-9\-_.~]/.test(ch)) out += ch;
+    else if (ch === '/' && !encodeSlash) out += ch;
+    else {
+      const bytes = _s3TE.encode(ch);
+      for (const b of bytes) out += '%' + b.toString(16).toUpperCase().padStart(2, '0');
+    }
+  }
+  return out;
+}
+async function _s3Sha256Hex(data) {
+  const buf = typeof data === 'string' ? _s3TE.encode(data) : data;
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return _s3BytesToHex(new Uint8Array(hash));
+}
+async function _s3Hmac(keyBytes, data) {
+  const k = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, typeof data === 'string' ? _s3TE.encode(data) : data);
+  return new Uint8Array(sig);
+}
+async function _s3SigningKey(secret, ymd, region) {
+  let k = await _s3Hmac(_s3TE.encode('AWS4' + secret), ymd);
+  k = await _s3Hmac(k, region);
+  k = await _s3Hmac(k, 's3');
+  return _s3Hmac(k, 'aws4_request');
+}
+function _s3AmzDate() {
+  const d = new Date();
+  const pad = n => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+}
+function _s3BuildEndpoint(cfg) {
+  // Returns { url, host } for the base — caller appends /bucket/key (path-style) or /key (virtual-host).
+  const ep = (cfg.endpoint || '').replace(/\/+$/, '');
+  const u = new URL(ep);
+  const pathStyle = cfg.forcePathStyle !== false;
+  if (pathStyle) return { origin: u.origin, host: u.host, pathPrefix: '/' + cfg.bucket };
+  // Virtual-host: bucket.<host>
+  return { origin: u.protocol + '//' + cfg.bucket + '.' + u.host, host: cfg.bucket + '.' + u.host, pathPrefix: '' };
+}
+async function _s3Request(cfg, method, keyPath, body, contentType) {
+  // body: undefined|null for no body (GET/HEAD); otherwise Uint8Array
+  const region = (cfg.region || 'us-east-1').trim();
+  const { origin, host, pathPrefix } = _s3BuildEndpoint(cfg);
+  const canonicalUri = _s3UriEncode(pathPrefix + '/' + keyPath.replace(/^\/+/, ''), false);
+  const url = origin + canonicalUri;
+  const amzDate = _s3AmzDate();
+  const ymd = amzDate.slice(0, 8);
+  const payloadBytes = body || new Uint8Array(0);
+  const payloadHash = await _s3Sha256Hex(payloadBytes);
+
+  const headers = { host, 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate };
+  if (body && contentType) headers['content-type'] = contentType;
+
+  const signedHeaderNames = Object.keys(headers).map(h => h.toLowerCase()).sort();
+  const canonicalHeaders = signedHeaderNames.map(h => `${h}:${String(headers[Object.keys(headers).find(k => k.toLowerCase() === h)]).trim()}\n`).join('');
+  const signedHeaders = signedHeaderNames.join(';');
+
+  const canonicalRequest = [method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const scope = `${ymd}/${region}/s3/aws4_request`;
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, await _s3Sha256Hex(canonicalRequest)].join('\n');
+  const signingKey = await _s3SigningKey(cfg.secretKey, ymd, region);
+  const signature = _s3BytesToHex(await _s3Hmac(signingKey, stringToSign));
+
+  headers['Authorization'] = `AWS4-HMAC-SHA256 Credential=${cfg.accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const fetchOpts = { method, headers };
+  if (body) fetchOpts.body = body;
+  return fetch(url, fetchOpts);
+}
+function _s3SnapshotKey(cfg, encrypted) {
+  const prefix = (cfg.prefix || 'onepagent/').replace(/^\/+|\/+$/g, '');
+  const name = encrypted ? S3_SNAPSHOT_NAME_BIN : S3_SNAPSHOT_NAME_JSON;
+  return prefix ? prefix + '/' + name : name;
+}
+async function _s3Put(cfg, key, body, contentType) {
+  const resp = await _s3Request(cfg, 'PUT', key, body, contentType);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`PUT failed: HTTP ${resp.status} ${_s3ErrHint(resp.status, text)}`);
+  }
+  return resp;
+}
+async function _s3Get(cfg, key) {
+  const resp = await _s3Request(cfg, 'GET', key, null);
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`GET failed: HTTP ${resp.status} ${_s3ErrHint(resp.status, text)}`);
+  }
+  return new Uint8Array(await resp.arrayBuffer());
+}
+async function _s3Head(cfg, key) {
+  const resp = await _s3Request(cfg, 'HEAD', key, null);
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`HEAD failed: HTTP ${resp.status} ${_s3ErrHint(resp.status, text)}`);
+  }
+  return { lastModified: resp.headers.get('Last-Modified'), etag: resp.headers.get('ETag') };
+}
+function _s3ErrHint(status, text) {
+  if (/RequestTimeTooSkewed/i.test(text)) return '\u2014 system clock is off by >15min; please sync it.';
+  if (status === 403) return '\u2014 check access key / secret / bucket permissions.';
+  if (status === 301 || status === 307) return '\u2014 wrong region for this bucket.';
+  if (status === 404) return '\u2014 bucket or key not found.';
+  return text ? '\u2014 ' + text.slice(0, 120) : '';
+}
+
+// ── Encryption (AES-256-GCM, PBKDF2-SHA256 key derivation) ────────
+const _S3_MAGIC = new Uint8Array([0x4F, 0x50, 0x41, 0x31]); // 'OPA1'
+const _S3_PBKDF2_ITER = 200000;
+async function _s3DeriveKey(pass, salt) {
+  const baseKey = await crypto.subtle.importKey('raw', _s3TE.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: _S3_PBKDF2_ITER, hash: 'SHA-256' },
+    baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+async function _s3Encrypt(jsonStr, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await _s3DeriveKey(passphrase, salt);
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, _s3TE.encode(jsonStr)));
+  const out = new Uint8Array(4 + 16 + 12 + cipher.length);
+  out.set(_S3_MAGIC, 0);
+  out.set(salt, 4);
+  out.set(iv, 20);
+  out.set(cipher, 32);
+  return out;
+}
+async function _s3Decrypt(bytes, passphrase) {
+  if (bytes.length < 32 || bytes[0] !== 0x4F || bytes[1] !== 0x50 || bytes[2] !== 0x41 || bytes[3] !== 0x31) {
+    throw new Error('Not an OnePagent encrypted snapshot (magic header missing).');
+  }
+  const salt = bytes.slice(4, 20);
+  const iv = bytes.slice(20, 32);
+  const cipher = bytes.slice(32);
+  const key = await _s3DeriveKey(passphrase, salt);
+  let plain;
+  try {
+    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+  } catch {
+    throw new Error('Decryption failed \u2014 wrong passphrase?');
+  }
+  return _s3TD.decode(plain);
+}
+function _s3LooksEncrypted(bytes) {
+  return bytes && bytes.length >= 4 && bytes[0] === 0x4F && bytes[1] === 0x50 && bytes[2] === 0x41 && bytes[3] === 0x31;
+}
+
+// ── Snapshot build / apply ────────────────────────────────────────
+async function buildSnapshot() {
+  // Persist current in-memory conv first so the snapshot is fresh.
+  try { if (activeConvId) await saveCurrentConv(false); } catch {}
+
+  const convMeta = await loadConvMetaFromDB() || [];
+  const convData = {};
+  for (const c of convMeta) {
+    const d = await loadConvDataFromDB(c.id);
+    if (d) convData[c.id] = d;
+  }
+  const skillFiles = {};
+  const skillMeta = [];
+  for (const s of skills) {
+    const { files, binaryFiles, ...rest } = s;
+    skillMeta.push(rest);
+    skillFiles[s.name] = await loadSkillFilesFromDB(s.name);
+  }
+  const settings = { ...(loadSettings() || {}) };
+  delete settings.api_key;
+  delete settings.tavily_api_key;
+
+  return {
+    version: 1,
+    exportedAt: Date.now(),
+    conversations: { meta: convMeta, data: convData },
+    skills: { metadata: skillMeta, files: skillFiles },
+    settings,
+    mcpTools: Array.isArray(mcpTools) ? mcpTools : [],
+    disabledTools: disabledTools instanceof Set ? [...disabledTools] : [],
+    wsConfig: { ...(wsConfig || {}) },
+    theme: localStorage.getItem('ba_theme') || 'dark',
+    selectedModel: localStorage.getItem('ba_selected_model') || ''
+  };
+}
+
+async function applySnapshot(snap) {
+  if (!snap || typeof snap !== 'object') throw new Error('Invalid snapshot');
+  if (snap.version !== 1) throw new Error('Unsupported snapshot version: ' + snap.version);
+
+  // 1. Settings — preserve local LLM / Tavily keys.
+  const local = loadSettings() || {};
+  const mergedSettings = { ...(snap.settings || {}) };
+  if (local.api_key) mergedSettings.api_key = local.api_key;
+  if (local.tavily_api_key) mergedSettings.tavily_api_key = local.tavily_api_key;
+  saveSettingsToStorage(mergedSettings);
+
+  // 2. Conversations
+  const convMeta = snap.conversations?.meta || [];
+  const convData = snap.conversations?.data || {};
+  await saveConvMetaToDB(convMeta);
+  for (const c of convMeta) {
+    if (convData[c.id]) await saveConvDataToDB(c.id, convData[c.id]);
+  }
+
+  // 3. Skills (metadata to localStorage, files to IDB)
+  const sMeta = snap.skills?.metadata || [];
+  const sFiles = snap.skills?.files || {};
+  try { localStorage.setItem('ba_skills', JSON.stringify(sMeta)); } catch {}
+  for (const s of sMeta) {
+    const payload = sFiles[s.name] || { files: {}, binaryFiles: {} };
+    await saveSkillFilesToDB(s.name, payload);
+  }
+
+  // 4. Ancillary stores
+  if (Array.isArray(snap.mcpTools)) {
+    mcpTools = snap.mcpTools.slice();
+    try { localStorage.setItem('ba_mcp_tools', JSON.stringify(mcpTools)); } catch {}
+  }
+  if (Array.isArray(snap.disabledTools)) {
+    disabledTools = new Set(snap.disabledTools);
+    try { localStorage.setItem('ba_disabled_tools', JSON.stringify([...disabledTools])); } catch {}
+  }
+  if (snap.wsConfig) {
+    Object.assign(wsConfig, snap.wsConfig);
+    try { localStorage.setItem('ba_ws_config', JSON.stringify(wsConfig)); } catch {}
+  }
+  if (snap.theme) { try { localStorage.setItem('ba_theme', snap.theme); } catch {} }
+  if (snap.selectedModel) { try { localStorage.setItem('ba_selected_model', snap.selectedModel); } catch {} }
+
+  // 5. Reload UI
+  skills = [];
+  await loadSkills();
+  await loadConvHistory();
+  if (typeof renderToolsGrid === 'function') renderToolsGrid();
+  if (typeof updateWsStatus === 'function') updateWsStatus();
+  applyModelContextLimit();
+}
+
+// ── Sync actions ──────────────────────────────────────────────────
+async function pushSnapshotToS3(silent) {
+  const cfg = _loadS3Cfg();
+  if (!_s3Configured(cfg)) throw new Error('Cloud sync not configured \u2014 open Settings.');
+  _s3PushInFlight = true;
+  try {
+    const snap = await buildSnapshot();
+    const json = JSON.stringify(snap);
+    let body, contentType, name;
+    if (cfg.passphrase) {
+      body = await _s3Encrypt(json, cfg.passphrase);
+      contentType = 'application/octet-stream';
+      name = _s3SnapshotKey(cfg, true);
+    } else {
+      body = _s3TE.encode(json);
+      contentType = 'application/json';
+      name = _s3SnapshotKey(cfg, false);
+    }
+    await _s3Put(cfg, name, body, contentType);
+    try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
+    _updateSyncStatus();
+    const kb = (body.length / 1024).toFixed(1);
+    if (!silent) appendSystemMsg(`\u2601 Snapshot pushed to S3 (${kb} KB, ${snap.conversations.meta.length} conv, ${snap.skills.metadata.length} skills)${cfg.passphrase ? ' \u2014 encrypted' : ''}.`);
+    return snap;
+  } finally {
+    _s3PushInFlight = false;
+  }
+}
+
+async function pullSnapshotFromS3() {
+  const cfg = _loadS3Cfg();
+  if (!_s3Configured(cfg)) throw new Error('Cloud sync not configured \u2014 open Settings.');
+  // Try encrypted blob first if passphrase is set, else plaintext first.
+  const tryOrder = cfg.passphrase
+    ? [_s3SnapshotKey(cfg, true), _s3SnapshotKey(cfg, false)]
+    : [_s3SnapshotKey(cfg, false), _s3SnapshotKey(cfg, true)];
+  let bytes = null;
+  for (const k of tryOrder) {
+    bytes = await _s3Get(cfg, k);
+    if (bytes) break;
+  }
+  if (!bytes) throw new Error('No snapshot found in bucket. Push one first.');
+
+  let jsonStr;
+  if (_s3LooksEncrypted(bytes)) {
+    if (!cfg.passphrase) throw new Error('Snapshot is encrypted \u2014 passphrase required in settings.');
+    jsonStr = await _s3Decrypt(bytes, cfg.passphrase);
+  } else {
+    jsonStr = _s3TD.decode(bytes);
+  }
+  const snap = JSON.parse(jsonStr);
+  const date = new Date(snap.exportedAt || Date.now()).toLocaleString();
+  if (!confirm(`Replace all local data with snapshot from ${date}?\n\n` +
+    `  \u2022 ${(snap.conversations?.meta || []).length} conversations\n` +
+    `  \u2022 ${(snap.skills?.metadata || []).length} skills\n\n` +
+    `This cannot be undone. Your LLM and Tavily keys are preserved.`)) return;
+  await applySnapshot(snap);
+  try { localStorage.setItem(S3_LAST_SYNC_KEY, String(Date.now())); } catch {}
+  _updateSyncStatus();
+  appendSystemMsg('\u2601 Snapshot pulled from S3.');
+}
+
+async function testS3Connection() {
+  const status = document.getElementById('s3Status');
+  if (status) status.textContent = 'Testing connection...';
+  const cfg = _readS3CfgFromModal();
+  if (!_s3Configured(cfg)) {
+    if (status) status.textContent = '\u26A0 Fill endpoint / bucket / access key / secret first.';
+    return;
+  }
+  try {
+    // HEAD on snapshot key — 404 is OK (means the bucket is reachable and auth works).
+    await _s3Head(cfg, _s3SnapshotKey(cfg, cfg.passphrase ? true : false));
+    if (status) status.textContent = '\u2705 Connection OK \u2014 bucket is reachable.';
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (status) {
+      if (/Failed to fetch|NetworkError|CORS/i.test(msg)) {
+        status.textContent = '\u26A0 Network/CORS error. Click "Show CORS config" and apply it to the bucket.';
+      } else {
+        status.textContent = '\u26A0 ' + msg;
+      }
+    }
+  }
+}
+
+function showCorsHint() {
+  const cors = [{ AllowedOrigins: ['*'], AllowedMethods: ['GET', 'PUT', 'HEAD'], AllowedHeaders: ['*'], ExposeHeaders: ['ETag'] }];
+  const json = JSON.stringify(cors, null, 2);
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(`<pre style="font:12px monospace;white-space:pre-wrap;padding:16px">${esc(json)}</pre>`);
+    w.document.title = 'OnePagent \u2014 CORS config for S3 bucket';
+  } else {
+    prompt('Copy this JSON into your bucket CORS policy:', json);
+  }
+}
+
+function _readS3CfgFromModal() {
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const gc = id => !!document.getElementById(id)?.checked;
+  return {
+    endpoint: g('setS3Endpoint').replace(/\/+$/, ''),
+    region: g('setS3Region') || 'us-east-1',
+    bucket: g('setS3Bucket'),
+    prefix: g('setS3Prefix') || 'onepagent/',
+    accessKey: g('setS3AccessKey'),
+    secretKey: g('setS3SecretKey'),
+    passphrase: g('setS3Passphrase'),
+    autoPush: gc('setS3AutoPush'),
+    forcePathStyle: gc('setS3PathStyle')
+  };
+}
+function _saveS3CfgFromModal() {
+  // Only called if the section exists in the DOM.
+  if (!document.getElementById('setS3Endpoint')) return;
+  _writeS3Cfg(_readS3CfgFromModal());
+}
+
+// ── Sync button UI ────────────────────────────────────────────────
+function toggleSyncMenu() {
+  const m = document.getElementById('syncMenu');
+  if (!m) return;
+  if (m.style.display === 'block') { m.style.display = 'none'; return; }
+  _updateSyncStatus();
+  m.style.display = 'block';
+  setTimeout(() => {
+    const h = e => {
+      if (!m.contains(e.target) && e.target.id !== 'syncBtn') { m.style.display = 'none'; document.removeEventListener('click', h); }
+    };
+    document.addEventListener('click', h);
+  }, 0);
+}
+function _updateSyncStatus() {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  const cfg = _loadS3Cfg();
+  if (!_s3Configured(cfg)) { el.textContent = 'Not configured \u2014 open Settings.'; return; }
+  const last = Number(localStorage.getItem(S3_LAST_SYNC_KEY) || 0);
+  if (!last) { el.textContent = 'Never synced.'; return; }
+  const diff = Date.now() - last;
+  const mins = Math.round(diff / 60000);
+  const hours = Math.round(diff / 3600000);
+  const days = Math.round(diff / 86400000);
+  let ago;
+  if (diff < 60000) ago = 'just now';
+  else if (mins < 60) ago = mins + ' min ago';
+  else if (hours < 24) ago = hours + ' h ago';
+  else ago = days + ' d ago';
+  el.textContent = 'Last synced ' + ago + (cfg.passphrase ? ' \u2014 encrypted' : '');
+}
+async function onSyncPushClick() {
+  const m = document.getElementById('syncMenu');
+  if (m) m.style.display = 'none';
+  try { await pushSnapshotToS3(); } catch (e) { appendSystemMsg('\u26A0 Push failed: ' + (e.message || e)); }
+}
+async function onSyncPullClick() {
+  const m = document.getElementById('syncMenu');
+  if (m) m.style.display = 'none';
+  try { await pullSnapshotFromS3(); } catch (e) { appendSystemMsg('\u26A0 Pull failed: ' + (e.message || e)); }
+}
+
+// ── Auto-push debouncer (called from saveCurrentConv / saveSkills) ─
+let _s3PushTimer = null;
+let _s3PushInFlight = false;
+function schedulePush() {
+  if (_s3PushInFlight) return;
+  const cfg = _loadS3Cfg();
+  if (!cfg || !cfg.autoPush || !_s3Configured(cfg)) return;
+  clearTimeout(_s3PushTimer);
+  _s3PushTimer = setTimeout(() => {
+    pushSnapshotToS3(true).catch(e => { console.warn('Auto-push failed:', e); appendSystemMsg('\u26A0 Auto-push failed: ' + (e.message || e)); });
+  }, 10000);
 }
 
 function addMcpTool() {
@@ -5276,7 +5772,13 @@ function appendErrorBubble(t, meta = {}) {
 function detectFormat(t) {
   const s = t.trimStart();
   if (/^<!DOCTYPE html/i.test(s) || /^<html[\s>]/i.test(s)) return 'html';
-  if (/<\/body>/i.test(s) && /<\/html>/i.test(s)) return 'html';
+  const stripped = s
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/~~~[\s\S]*?~~~/g, '')
+    .replace(/```[\s\S]*$/, '')
+    .replace(/~~~[\s\S]*$/, '')
+    .replace(/`[^`\n]*`/g, '');
+  if (/<\/body>/i.test(stripped) && /<\/html>/i.test(stripped)) return 'html';
   return 'markdown';
 }
 function renderMd(el, t) {
