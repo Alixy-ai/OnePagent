@@ -168,7 +168,7 @@ return 'Echo: ' + input.text;
 
 ## Roadmap
 
-- [ ] 插件市场（社区 Skills 聚合）
+- [x] 插件市场（社区 Skills 聚合）
 - [x] IndexedDB 会话归档（替换 localStorage 上限）
 - [ ] WebRTC 多端同步
 - [ ] 本地模型（via `window.ai` / WebGPU）

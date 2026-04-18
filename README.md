@@ -168,7 +168,7 @@ Message rendering uses the inlined **Pretext engine** — canvas-based precise t
 
 ## Roadmap
 
-- [ ] Skill marketplace (community skill aggregator)
+- [x] Skill marketplace (community skill aggregator)
 - [x] IndexedDB conversation archive (bypass localStorage limits)
 - [ ] WebRTC multi-device sync
 - [ ] Local models (via `window.ai` / WebGPU)
