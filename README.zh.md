@@ -292,7 +292,7 @@ return 'Echo: ' + input.text;
 - [x] 插件市场（社区 Skills 聚合）
 - [x] IndexedDB 会话归档（替换 localStorage 上限）
 - [x] S3 兼容云端同步（增量、内容寻址、可选端到端加密）
-- [ ] WebRTC 点对点实时同步
+- [ ] 全局记忆系统（跨会话的长期记忆）
 - [ ] 本地模型（via `window.ai` / WebGPU）
 
 ---

@@ -293,7 +293,7 @@ Message rendering uses the inlined **Pretext engine** — canvas-based precise t
 - [x] Skill marketplace (community skill aggregator)
 - [x] IndexedDB conversation archive (bypass localStorage limits)
 - [x] Cloud Sync to S3-compatible buckets (incremental, content-addressed, optional E2E encryption)
-- [ ] WebRTC peer-to-peer live sync
+- [ ] Global memory system (cross-conversation long-term recall)
 - [ ] Local models (via `window.ai` / WebGPU)
 
 ---
