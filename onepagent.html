@@ -509,7 +509,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .sp-actions button { flex: none; margin: 0; padding: 2px 8px; }
 
 /* Skills */
-.skills-list { display: flex; flex-direction: column; gap: 4px; }
+.skills-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
 .skill-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; background: var(--bg-root); border: 1px solid var(--border); cursor: pointer; transition: all 0.2s; }
 .skill-item:hover { border-color: var(--accent-yellow); }
 .skill-item.active { border-color: var(--accent-yellow); background: rgba(255,215,0,0.05); }
@@ -525,7 +525,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .skill-install-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 
 /* File explorer */
-.fe-tree { font-size: 12px; overflow-y: auto; flex: 1; }
+.fe-tree { font-size: 12px; overflow-y: auto; min-height: 140px; max-height: 360px; }
 .fe-item { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: pointer; transition: background 0.1s; white-space: nowrap; overflow: hidden; position: relative; }
 .fe-item:hover { background: var(--bg-hover); }
 .fe-item:hover .fe-check { opacity: 1; }
@@ -644,7 +644,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .md-modal-preview hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 /* Panel collapse toggles */
-.left-panel, .right-panel { min-width: 0; overflow: hidden; }
+.left-panel, .right-panel { min-width: 0; overflow-x: hidden; }
 .panel-toggle-btn { width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; line-height: 1; }
 .mobile-fab { display: none; }
 .panel-toggle-btn:hover { border-color: var(--accent-orange); color: var(--accent-orange); }
@@ -1095,7 +1095,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 
     <!-- Files -->
-    <div class="panel-section" data-section="files" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+    <div class="panel-section" data-section="files" style="display:flex;flex-direction:column">
       <div class="section-title" onclick="toggleSection(this)">
         <span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F4C1;</span> <span data-i18n="section.files">FILES</span></span>
         <span style="display:flex;gap:2px" onclick="event.stopPropagation()">
@@ -1106,8 +1106,8 @@ document.addEventListener('DOMContentLoaded', function() {
         </span>
         <span class="section-arrow">&#x25BC;</span>
       </div>
-      <div class="section-body" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
-        <div class="fe-tree" id="fileTree" style="flex:1"></div>
+      <div class="section-body" style="display:flex;flex-direction:column">
+        <div class="fe-tree" id="fileTree"></div>
         <div class="fe-select-bar" id="feSelectBar" style="display:none">
           <span class="fe-select-count"><span id="feSelectCount">0</span> <span data-i18n="fe.selected">selected</span></span>
           <button class="skill-install-btn" onclick="feDownloadSelectedZip()" title="Download selected as .zip" data-i18n-title="fe.downloadZipTitle">&#x2B07; <span data-i18n="fe.downloadZip">ZIP</span></button>
