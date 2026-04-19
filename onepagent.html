@@ -484,6 +484,11 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .provider-badge { font-size: clamp(10px, 1vw, 11px); color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; padding: clamp(2px, 0.3vw, 3px) clamp(6px, 0.8vw, 10px); background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .model-select { background: var(--bg-root); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: clamp(10px, 1vw, 11px); padding: 2px 6px; outline: none; max-width: clamp(100px, 16vw, 220px); cursor: pointer; }
 .model-select:focus { border-color: var(--accent-orange); }
+.think-badge { font-size: clamp(10px, 1vw, 11px); color: var(--text-secondary); font-family: 'Inter', sans-serif; padding: clamp(2px, 0.3vw, 3px) clamp(4px, 0.6vw, 8px); background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.think-badge.on { border-color: var(--accent-purple); color: var(--accent-purple); }
+.think-icon { font-size: 12px; }
+.think-select { background: var(--bg-root); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: clamp(10px, 1vw, 11px); padding: 1px 4px; outline: none; cursor: pointer; }
+.think-select:focus { border-color: var(--accent-purple); }
 .top-btn { padding: clamp(3px, 0.5vw, 5px) clamp(6px, 1vw, 12px); border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: clamp(10px, 1vw, 11px); cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; white-space: nowrap; flex-shrink: 0; }
 .top-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 .top-btn-icon { display: inline-flex; align-items: center; gap: 4px; }
@@ -550,7 +555,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .fe-ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
 /* Inline rename */
 .fe-rename { background: var(--bg-root); border: 1px solid var(--accent-blue); color: var(--text-primary); font-size: 11px; font-family: 'Inter',sans-serif; padding: 1px 4px; border-radius: 3px; outline: none; width: 100%; }
-.fe-upload-zone { padding: 6px; border: 1px dashed var(--border); border-radius: 5px; font-size: 10px; color: var(--text-dim); position: relative; transition: all 0.2s; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+.fe-upload-zone { margin: auto 12px 12px; padding: 6px; border: 1px dashed var(--border); border-radius: 5px; font-size: 10px; color: var(--text-dim); position: sticky; bottom: 12px; transition: all 0.2s; display: flex; align-items: center; gap: 6px; background: var(--bg-panel); z-index: 5; flex-shrink: 0; }
 .fe-upload-zone:hover { border-color: var(--accent-blue); color: var(--text-secondary); }
 .fe-upload-zone.dragover { border-color: var(--accent-green); background: rgba(0,255,136,0.03); }
 .fe-upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -584,7 +589,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .msg-error .msg-body { border-color: var(--accent-red); color: var(--accent-red); }
 
 /* Message action bar */
-.msg-actions { position: absolute; right: 10px; bottom: 0; display: flex; gap: 1px; opacity: 0; transition: opacity 0.2s; pointer-events: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; width: fit-content; z-index: 1; }
+.msg-actions { position: absolute; left: 0; bottom: 0; display: flex; gap: 1px; opacity: 0; transition: opacity 0.2s; pointer-events: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; width: fit-content; z-index: 1; max-width: min(100%, 220px); }
 .msg-assistant-main > .msg-body:hover + .msg-actions, .msg-actions:hover { opacity: 1; pointer-events: auto; }
 .msg-action-btn { padding: 4px 8px; border: none; border-right: 1px solid var(--border); background: transparent; color: var(--text-dim); font-size: 13px; cursor: pointer; transition: all 0.15s; line-height: 1; white-space: nowrap; user-select: none; display: flex; align-items: center; justify-content: center; min-width: 30px; }
 .msg-action-btn:last-child { border-right: none; }
@@ -928,7 +933,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
   #toggleLeft, #toggleRight { width: 34px; height: 34px; font-size: 18px; border-color: var(--accent-orange); color: var(--accent-orange); background: var(--bg-panel); flex-shrink: 0; }
   .top-bar-center { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   .top-bar-center::-webkit-scrollbar { display: none; }
-  .logo-text, .status-text, .loop-badge, #tokenBadge { display: none; }
+  .logo-text, .status-text, .loop-badge, #tokenBadge, .think-badge { display: none; }
 
   .msg { max-width: 100% !important; }
   .msg-assistant { max-width: 100% !important; }
@@ -1031,6 +1036,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <span class="status-text" id="statusText" data-i18n="status.ready">Ready</span>
     <div class="top-right">
       <span class="provider-badge" id="providerBadge"><span id="providerLabel">anthropic</span> / <select id="modelSelect" class="model-select"><option value="">loading...</option></select></span>
+      <span class="think-badge" id="thinkBadge" title="Thinking level" data-i18n-title="think.title"><span class="think-icon" aria-hidden="true">&#x1F9E0;</span><select id="thinkSelect" class="think-select" onchange="setThinkingLevel(this.value)"><option value="off" data-i18n="think.off">Off</option><option value="minimal" data-i18n="think.minimal">Minimal</option><option value="low" data-i18n="think.low">Low</option><option value="medium" data-i18n="think.medium">Medium</option><option value="high" data-i18n="think.high">High</option></select></span>
       <span class="loop-badge" id="loopBadge">Loop: 0</span>
       <span class="loop-badge" id="tokenBadge">Tokens: 0</span>
       <button class="top-btn" onclick="newConversation()"><span data-i18n="btn.new">+ New</span></button>
@@ -1113,14 +1119,15 @@ document.addEventListener('DOMContentLoaded', function() {
           <button class="skill-install-btn" onclick="feDownloadSelectedZip()" title="Download selected as .zip" data-i18n-title="fe.downloadZipTitle">&#x2B07; <span data-i18n="fe.downloadZip">ZIP</span></button>
           <button class="skill-install-btn" onclick="feClearSelection()" title="Clear selection" data-i18n-title="fe.clearSelection">&#x2715;</button>
         </div>
-        <div class="fe-upload-zone" id="uploadZone">
-          <input type="file" id="fileInput" multiple onchange="handleUpload(event)">
-          <span class="fe-upload-label" data-i18n="upload.drop">Drop files or click to upload</span>
-          <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()" data-i18n="upload.folder">Folder</button>
-        </div>
-        <input type="file" id="folderInput" webkitdirectory directory multiple onchange="handleFolderUpload(event)" style="display:none">
       </div>
     </div>
+    <!-- Upload zone pinned to bottom of left panel -->
+    <div class="fe-upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" multiple onchange="handleUpload(event)">
+      <span class="fe-upload-label" data-i18n="upload.drop">Drop files or click to upload</span>
+      <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()" data-i18n="upload.folder">Folder</button>
+    </div>
+    <input type="file" id="folderInput" webkitdirectory directory multiple onchange="handleFolderUpload(event)" style="display:none">
   </div>
 
   <!-- Left Resize Handle -->
@@ -1627,6 +1634,14 @@ const I18N = {
     'code.copied': 'Copied',
     'code.preview': 'Preview',
     'code.previewTitle': 'Preview HTML in a sandboxed frame',
+    // Thinking level
+    'think.title': 'Reasoning / thinking level',
+    'think.off': 'Think: Off',
+    'think.minimal': 'Think: Minimal',
+    'think.low': 'Think: Low',
+    'think.medium': 'Think: Medium',
+    'think.high': 'Think: High',
+    'think.unsupported': 'Current provider or model may ignore the thinking level.',
     // Skills
     'skills.market': 'Market',
     'skills.file': '.skill/.zip',
@@ -1839,6 +1854,14 @@ const I18N = {
     'code.copied': '已复制',
     'code.preview': '预览',
     'code.previewTitle': '在沙盒中预览 HTML',
+    // Thinking level
+    'think.title': '思考 / 推理程度',
+    'think.off': '思考：关',
+    'think.minimal': '思考：极简',
+    'think.low': '思考：低',
+    'think.medium': '思考：中',
+    'think.high': '思考：高',
+    'think.unsupported': '当前提供方或模型可能会忽略思考程度设置。',
     // Skills
     'skills.market': '市场',
     'skills.file': '.skill/.zip',
@@ -2033,6 +2056,54 @@ function updateLangButton() {
   const label = btn.querySelector('[data-role="lang-label"]');
   if (label) label.textContent = CURRENT_LANG === 'zh' ? '中' : 'EN';
   btn.setAttribute('title', t('btn.langTitle'));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THINKING / REASONING LEVEL — maps to provider-specific API params
+// ═══════════════════════════════════════════════════════════════════
+const THINK_KEY = 'ba_think_level';
+const THINK_LEVELS = ['off', 'minimal', 'low', 'medium', 'high'];
+let THINK_LEVEL = (() => {
+  try { const v = localStorage.getItem(THINK_KEY); if (THINK_LEVELS.includes(v)) return v; } catch {}
+  return 'off';
+})();
+// Approximate token budgets for Anthropic extended thinking.
+const ANTHROPIC_THINK_BUDGET = { minimal: 1024, low: 2048, medium: 8000, high: 16000 };
+function setThinkingLevel(level) {
+  if (!THINK_LEVELS.includes(level)) level = 'off';
+  THINK_LEVEL = level;
+  try { localStorage.setItem(THINK_KEY, level); } catch {}
+  const badge = document.getElementById('thinkBadge');
+  if (badge) badge.classList.toggle('on', level !== 'off');
+  const sel = document.getElementById('thinkSelect');
+  if (sel && sel.value !== level) sel.value = level;
+}
+function initThinkingControl() {
+  const sel = document.getElementById('thinkSelect');
+  if (sel) sel.value = THINK_LEVEL;
+  const badge = document.getElementById('thinkBadge');
+  if (badge) badge.classList.toggle('on', THINK_LEVEL !== 'off');
+}
+function applyThinkingToRequestBody(body, provider) {
+  if (!body || THINK_LEVEL === 'off') return body;
+  if (provider === 'anthropic') {
+    const budget = ANTHROPIC_THINK_BUDGET[THINK_LEVEL] || 0;
+    if (budget > 0) {
+      body.thinking = { type: 'enabled', budget_tokens: budget };
+      // Anthropic requires max_tokens > budget_tokens; give at least 2k headroom.
+      const needed = budget + 2048;
+      if (!Number.isFinite(body.max_tokens) || body.max_tokens < needed) body.max_tokens = needed;
+      // Extended-thinking requires temperature to be unset/1; let the server default it.
+      delete body.temperature;
+    }
+  } else {
+    // OpenAI-compatible (openai, deepseek, etc.)
+    // `minimal` is accepted by GPT-5 family; other o-series accept low/medium/high.
+    body.reasoning_effort = THINK_LEVEL;
+    // Also send the nested form used by Responses API; chat-completions ignores unknown keys.
+    body.reasoning = { effort: THINK_LEVEL };
+  }
+  return body;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -8139,13 +8210,14 @@ async function buildRequestBody(messages = buildConversationFromEntries(), headI
   const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + planPrompt + memPrompt;
   rebuildToolDefs(headId);
   if (PROVIDER === 'anthropic') {
-    return {
+    const body = {
       model: API_MODEL,
       max_tokens: ANTHROPIC_MAX_TOKENS,
       system: systemPrompt,
       messages: messages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
       tools: getEnabledToolsAnthropic()
     };
+    return applyThinkingToRequestBody(body, 'anthropic');
   }
   const oai = [{ role: 'system', content: systemPrompt }];
   for (const m of messages) {
@@ -8163,7 +8235,7 @@ async function buildRequestBody(messages = buildConversationFromEntries(), headI
       else oai.push({ role: 'assistant', content: m.content });
     }
   }
-  return { model: API_MODEL, messages: oai, tools: getEnabledToolsOpenAI() };
+  return applyThinkingToRequestBody({ model: API_MODEL, messages: oai, tools: getEnabledToolsOpenAI() }, PROVIDER);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -9400,6 +9472,7 @@ marked.setOptions({ gfm: true, breaks: true });
 (async function init() {
   applyI18n();
   updateLangButton();
+  initThinkingControl();
   await blobStore.init();
   await _migrateLegacyVfsBytes();
   await loadSkills();
