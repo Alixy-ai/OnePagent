@@ -1393,6 +1393,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <option value="tool">tool</option>
           <option value="manual">manual</option>
         </select>
+        <label style="display:flex;align-items:center;gap:4px;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-secondary);margin:0;white-space:nowrap"><input type="checkbox" id="memShowRetired" onchange="renderMemoryList()" style="width:auto;margin:0"> Show retired</label>
       </div>
       <div id="memTagChips" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
       <div id="memStats" style="font-size:10px;color:var(--text-dim);margin-bottom:6px"></div>
@@ -4768,27 +4769,9 @@ async function _applyRemoteState(remote, objs, blobMap) {
     const incoming = Array.isArray(memObj?.memories) ? memObj.memories : [];
     if (incoming.length) {
       try {
-        const current = await memListAll();
-        const byId = new Map(current.map(m => [m.id, m]));
         for (const m of incoming) {
           if (!m || !m.id || typeof m.content !== 'string') continue;
-          const existing = byId.get(m.id);
-          if (!existing || (m.updatedAt || 0) > (existing.updatedAt || 0)) {
-            await memPutRaw({
-              id: m.id,
-              content: m.content,
-              type: m.type || 'fact',
-              tags: Array.isArray(m.tags) ? m.tags : [],
-              createdAt: Number.isFinite(m.createdAt) ? m.createdAt : Date.now(),
-              updatedAt: Number.isFinite(m.updatedAt) ? m.updatedAt : Date.now(),
-              lastRecalledAt: m.lastRecalledAt || null,
-              recallCount: m.recallCount || 0,
-              pinned: !!m.pinned,
-              convId: m.convId || null,
-              sourceTurn: m.sourceTurn ?? null,
-              source: m.source || 'manual'
-            });
-          }
+          await _memMergeIncoming(m);
         }
       } catch (e) { console.warn('memory sync apply failed', e); }
     }
@@ -4801,6 +4784,10 @@ async function _applyRemoteState(remote, objs, blobMap) {
   if (typeof renderToolsGrid === 'function') renderToolsGrid();
   if (typeof updateWsStatus === 'function') updateWsStatus();
   applyModelContextLimit();
+  // React to pulled memory settings (enabled flag, pulled records).
+  if (typeof renderMemoryButton === 'function') renderMemoryButton();
+  if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
+  if (document.getElementById('memoryModal')?.classList.contains('show') && typeof renderMemoryList === 'function') renderMemoryList();
 }
 
 // ── v1 legacy pull (single-blob snapshot from before the v2 split) ─
@@ -4842,6 +4829,10 @@ async function _applyV1Snapshot(snap) {
   if (typeof renderToolsGrid === 'function') renderToolsGrid();
   if (typeof updateWsStatus === 'function') updateWsStatus();
   applyModelContextLimit();
+  // React to pulled memory settings (enabled flag, pulled records).
+  if (typeof renderMemoryButton === 'function') renderMemoryButton();
+  if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
+  if (document.getElementById('memoryModal')?.classList.contains('show') && typeof renderMemoryList === 'function') renderMemoryList();
 }
 
 // ── Push (v2 incremental, hash-dedup, progress) ───────────────────
@@ -5359,7 +5350,55 @@ async function memPutRaw(record) {
   return record;
 }
 
-async function memSave({ content, tags, type, source, convId, sourceTurn, pinned }) {
+// Normalize a tag array: lowercase, trim, strip quotes/brackets/backslash, dedupe, cap.
+function _memSanitizeTags(arr) {
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of arr) {
+    const t = String(raw || '').toLowerCase().trim().replace(/['"`<>\\]/g, '').slice(0, 40);
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+// Merge an incoming memory record into the store. Policy:
+//   - no id on the incoming record → treat as a fresh add (legacy import)
+//   - id exists locally → overwrite only when incoming updatedAt is newer
+//   - id not in store → insert as-is
+// Returns one of: 'added', 'updated', 'skipped'. Used by both import and S3 sync.
+async function _memMergeIncoming(incoming) {
+  if (!incoming || typeof incoming.content !== 'string') return 'skipped';
+  const cache = await memLoadCache();
+  const now = Date.now();
+  const id = incoming.id || genMemId();
+  const existing = cache.find(m => m.id === id);
+  if (existing && (incoming.updatedAt || 0) <= (existing.updatedAt || 0)) return 'skipped';
+  const rec = {
+    id,
+    content: String(incoming.content),
+    type: ['fact','preference','event','skill','note'].includes(incoming.type) ? incoming.type : 'fact',
+    tags: _memSanitizeTags(incoming.tags),
+    createdAt: Number.isFinite(incoming.createdAt) ? incoming.createdAt : (existing?.createdAt || now),
+    updatedAt: Number.isFinite(incoming.updatedAt) ? incoming.updatedAt : now,
+    lastRecalledAt: incoming.lastRecalledAt || existing?.lastRecalledAt || null,
+    recallCount: Number.isFinite(incoming.recallCount) ? incoming.recallCount : (existing?.recallCount || 0),
+    pinned: !!incoming.pinned,
+    convId: incoming.convId || existing?.convId || null,
+    sourceTurn: incoming.sourceTurn ?? existing?.sourceTurn ?? null,
+    source: incoming.source || existing?.source || 'manual',
+    superseded: !!incoming.superseded,
+    supersededBy: typeof incoming.supersededBy === 'string' ? incoming.supersededBy : null,
+    supersedes: Array.isArray(incoming.supersedes) ? incoming.supersedes.filter(s => typeof s === 'string') : []
+  };
+  await memPutRaw(rec);
+  return existing ? 'updated' : 'added';
+}
+
+async function memSave({ content, tags, type, source, convId, sourceTurn, pinned, supersedesIds }) {
   const c = (content || '').trim();
   if (!c) throw new Error('memSave: content required');
   const now = Date.now();
@@ -5367,7 +5406,7 @@ async function memSave({ content, tags, type, source, convId, sourceTurn, pinned
     id: genMemId(),
     content: c,
     type: type || 'fact',
-    tags: Array.isArray(tags) ? tags.map(t => String(t).toLowerCase().trim().replace(/['"`<>\\]/g, '')).filter(Boolean) : [],
+    tags: _memSanitizeTags(tags),
     createdAt: now,
     updatedAt: now,
     lastRecalledAt: null,
@@ -5375,8 +5414,36 @@ async function memSave({ content, tags, type, source, convId, sourceTurn, pinned
     pinned: !!pinned,
     convId: convId || activeConvId || null,
     sourceTurn: Number.isFinite(sourceTurn) ? sourceTurn : (typeof loopCount === 'number' ? loopCount : null),
-    source: source || 'manual'
+    source: source || 'manual',
+    // Phase 1: supersede bookkeeping.
+    superseded: false,
+    supersededBy: null,
+    supersedes: []
   };
+  // Resolve supersedes: validate each id exists and is not already superseded,
+  // then mark those records retired with a pointer to the new record.
+  if (Array.isArray(supersedesIds) && supersedesIds.length) {
+    const cache = await memLoadCache();
+    const validOldIds = [];
+    for (const oldId of supersedesIds) {
+      if (typeof oldId !== 'string' || oldId === record.id) continue;
+      const old = cache.find(m => m.id === oldId);
+      if (!old) continue;
+      validOldIds.push(oldId);
+    }
+    record.supersedes = validOldIds.slice(0, 6);
+    await memPutRaw(record);
+    // Retire old records AFTER the new one is persisted so recall never sees a gap.
+    for (const oldId of record.supersedes) {
+      const old = _memCache?.find(m => m.id === oldId);
+      if (!old || old.superseded) continue;
+      old.superseded = true;
+      old.supersededBy = record.id;
+      old.updatedAt = now;
+      await memPutRaw(old);
+    }
+    return record;
+  }
   await memPutRaw(record);
   return record;
 }
@@ -5480,8 +5547,11 @@ async function memRecallForPrompt(messages) {
     if (!cfg.enabled) return '';
     const all = await memLoadCache();
     if (!all.length) return '';
+    // Skip retired memories entirely — they never go into the prompt.
+    const live = all.filter(m => !m.superseded);
+    if (!live.length) return '';
     const query = _memQueryFromMessages(messages);
-    const ranked = memRank(all, query, { limit: Math.max(0, cfg.maxRecall | 0) });
+    const ranked = memRank(live, query, { limit: Math.max(0, cfg.maxRecall | 0) });
     if (!ranked.length) return '';
     // Require some relevance unless pinned — keep first few pinned even at zero score.
     const meaningful = ranked.filter(r => r.score > 0.12 || r.rec.pinned);
@@ -5512,16 +5582,22 @@ function _memNormalize(text) {
 function _memShouldSkipExchange(userText, assistantText) {
   const u = String(userText || '').trim();
   if (!u) return true;
-  // Pure agent-continuation / short commands: skip.
+  // Pure agent-continuation / short commands: skip. Covers both English and CJK.
   if (u.length < 12) return true;
-  const shortDirective = /^(go|ok|continue|next|yes|no|run|test|stop|retry|again|more|done|fix|try|show|list|cat|ls|help|print|log|dump)\b/i;
-  if (u.length < 40 && shortDirective.test(u) && !/\b(prefer|use|i'?m|i am|we are|my|our|don'?t want|always|never|remember)\b/i.test(u)) return true;
-  // Has any declarative first-person / project claim?
-  const declarative = /\b(i'?m|i am|i prefer|i use|i like|i don'?t|i'?ll|i will|my |we are|we use|we prefer|our |the project|this project|always|never|remember|note that|for the record|decision:|policy:)\b/i;
-  const imperativeRemember = /\b(remember|记住|note this)\b/i.test(u);
+  // Short directive openings — English + Chinese. Gated by length so longer
+  // statements that happen to start with these words still reach the LLM.
+  const shortDirectiveEn = /^(go|ok|continue|next|yes|no|run|test|stop|retry|again|more|done|fix|try|show|list|cat|ls|help|print|log|dump)\b/i;
+  const shortDirectiveZh = /^(继续|好|好的|嗯|收到|明白|下一步|再试|再来|重试|试试|跑一下|跑吧|测一下|打印|列出|显示|看看|执行|帮我|请|请问|好了|结束|停|完)/;
+  // Declarative signals — first-person / project / decisions. English + Chinese.
+  const declarativeEn = /\b(i'?m|i am|i prefer|i use|i like|i don'?t|i'?ll|i will|my |we are|we use|we prefer|our |the project|this project|always|never|remember|note that|for the record|decision:|policy:)\b/i;
+  const declarativeZh = /(我(喜欢|偏好|觉得|想|不想|讨厌|认为|使用|用|经常|通常|习惯|打算|决定)|我们(用|使用|偏好|有|约定|决定|遵循)|项目(是|要|需要|用|约定|使用|采用)|团队(用|使用|约定)|约定[:：]|决定[:：]|政策[:：]|规范[:：])/;
+  const declarative = declarativeEn.test(u) || declarativeZh.test(u);
+  const imperativeRemember = /\b(remember|note this)\b/i.test(u) || /(记住|记一下|记录一下|请记住|注意[:：]|请注意)/.test(u);
+  if (u.length < 40 && (shortDirectiveEn.test(u) || shortDirectiveZh.test(u)) && !declarative && !imperativeRemember) return true;
   // Question with no declarative content and no explicit "remember": skip.
-  const looksLikeQuestion = /\?$/.test(u) || /^(what|why|when|where|how|who|which|can|could|should|would|does|do|is|are|will)\b/i.test(u);
-  if (looksLikeQuestion && !declarative.test(u) && !imperativeRemember) return true;
+  const looksLikeQuestionEn = /\?$/.test(u) || /^(what|why|when|where|how|who|which|can|could|should|would|does|do|is|are|will)\b/i.test(u);
+  const looksLikeQuestionZh = /[?？]$/.test(u) || /^(什么|为什么|怎么|怎样|如何|谁|哪|哪里|哪个|能不能|可不可以|是不是|有没有)/.test(u);
+  if ((looksLikeQuestionEn || looksLikeQuestionZh) && !declarative && !imperativeRemember) return true;
   return false;
 }
 
@@ -5545,6 +5621,27 @@ function _memIsDuplicateFuzzy(candidateContent, existingRecords) {
   return false;
 }
 
+// Validate + normalize one extracted memory candidate. Returns a sanitized
+// partial record (without id/timestamps) or null to reject.
+function _memValidateExtracted(item) {
+  if (!item || typeof item !== 'object') return null;
+  if (typeof item.content !== 'string') return null;
+  const content = item.content.trim();
+  if (content.length < 8 || content.length > 400) return null;
+  const salience = Number(item.salience);
+  // Missing salience → treat as 3 (neutral); explicit sub-3 → reject.
+  if (Number.isFinite(salience) && salience < 3) return null;
+  // Reject items that describe ephemeral user actions (English + Chinese).
+  const rejectPrefix = /^(user (asked|wondered|requested|wanted to|is trying to|is working on|is exploring|is debugging|ran|tried|tested|executed|fixed|wrote|created)\b|用户(询问|想知道|要求|请求|尝试|在尝试|在调试|在探索|运行|执行|跑|测试|修复|写|创建|做了|做过|查看|查询|检查))/i;
+  if (rejectPrefix.test(content)) return null;
+  const type = ['fact','preference','event','skill','note'].includes(item.type) ? item.type : 'fact';
+  const tags = _memSanitizeTags(item.tags);
+  const supersedesIds = Array.isArray(item.supersedesIds)
+    ? item.supersedesIds.filter(s => typeof s === 'string' && s.startsWith('mem_')).slice(0, 6)
+    : [];
+  return { content, type, tags, supersedesIds };
+}
+
 async function memExtractAfterTurn({ userText, assistantContent, loopCount: lc, convId }) {
   // Concurrency guard — drop overlapping calls rather than pile them up.
   if (_memExtractInFlight > 0) return;
@@ -5560,10 +5657,14 @@ async function memExtractAfterTurn({ userText, assistantContent, loopCount: lc, 
     if (_memShouldSkipExchange(userTrim, assistantText)) return;
     const exchange = `[user] ${userTrim}\n\n[assistant] ${assistantText}`.slice(0, 8000);
 
-    // Seed the prompt with up to 12 recent memories so the model can self-dedupe.
+    // Seed the prompt with up to 12 recent non-superseded memories so the
+    // model can self-dedupe and propose supersedes candidates.
     const cache = await memLoadCache();
-    const recentSeed = cache.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 12)
-      .map(m => `- [${m.type || 'fact'}${(m.tags && m.tags.length) ? ' ' + m.tags.map(t => '#' + t).join(' ') : ''}] ${m.content}`)
+    const seedPool = cache.filter(m => !m.superseded)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, 12);
+    const recentSeed = seedPool
+      .map(m => `- {${m.id}} [${m.type || 'fact'}${(m.tags && m.tags.length) ? ' ' + m.tags.map(t => '#' + t).join(' ') : ''}] ${m.content}`)
       .join('\n');
 
     const sys = [
@@ -5584,23 +5685,44 @@ async function memExtractAfterTurn({ userText, assistantContent, loopCount: lc, 
       '  - restatements of common / public knowledge',
       '  - anything already represented in the EXISTING MEMORIES list below — skip duplicates and near-duplicates, even if the wording differs',
       '',
+      'SUPERSEDES:',
+      '  - If a new memory replaces an existing memory (user changed their mind, old fact is now stale, or the new fact is a strict superset), include "supersedesIds":["<id>",...] listing the ids of the retired EXISTING MEMORIES. The ids appear in braces like {mem_abc123} in the list below.',
+      '  - Only supersede when you are confident. If unsure, omit supersedesIds.',
+      '',
       'OUTPUT: strict JSON only, no prose, no markdown fence. Schema:',
-      '{"memories":[{"content":"User prefers X over Y","type":"fact|preference|event|skill|note","tags":["lowercase","tokens"],"salience":1-5}]}',
+      '{"memories":[{"content":"User prefers X over Y","type":"fact|preference|event|skill|note","tags":["lowercase","tokens"],"salience":1-5,"supersedesIds":["mem_..."]}]}',
       'Each content: self-contained, third-person ("User prefers X", never "I prefer X"), <= 220 chars.',
       'salience: 5 = must-remember long-term, 3 = probably useful, 1 = trivial. Only emit items with salience >= 3.',
       'If the exchange contains nothing that qualifies, return {"memories":[]}. Prefer emptiness over noise.'
     ].join('\n');
 
     const userMsg = (recentSeed
-      ? `EXISTING MEMORIES (skip anything semantically similar):\n${recentSeed}\n\n`
+      ? `EXISTING MEMORIES (skip duplicates; supersede when the new fact replaces one):\n${recentSeed}\n\n`
       : '') + `EXCHANGE TO ANALYZE:\n${exchange}`;
 
     const model = cfg.extractionModel || API_MODEL;
     let body;
+    let anthropicPrefilled = false;
     if (PROVIDER === 'anthropic') {
-      body = { model, max_tokens: 800, system: sys, messages: [{ role: 'user', content: userMsg }], stream: false };
+      // Prefill "{" so Anthropic continues a JSON object instead of prose.
+      body = {
+        model,
+        max_tokens: 800,
+        system: sys,
+        messages: [
+          { role: 'user', content: userMsg },
+          { role: 'assistant', content: '{' }
+        ],
+        stream: false
+      };
+      anthropicPrefilled = true;
     } else {
-      body = { model, messages: [{ role: 'system', content: sys }, { role: 'user', content: userMsg }], stream: false };
+      body = {
+        model,
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: userMsg }],
+        response_format: { type: 'json_object' },
+        stream: false
+      };
     }
     const resp = await fetch(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
     if (!resp.ok) return;
@@ -5609,30 +5731,36 @@ async function memExtractAfterTurn({ userText, assistantContent, loopCount: lc, 
     if (PROVIDER === 'anthropic') raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
     else raw = data.choices?.[0]?.message?.content || '';
     if (!raw) return;
-    const jsonStart = raw.indexOf('{');
-    const jsonEnd = raw.lastIndexOf('}');
-    if (jsonStart < 0 || jsonEnd <= jsonStart) return;
-    let parsed;
-    try { parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)); } catch { return; }
+    // Reattach the prefilled "{" and try strict parse first; fall back to
+    // regex-extract if the provider returned extra prose.
+    if (anthropicPrefilled) raw = '{' + raw;
+    let parsed = null;
+    try { parsed = JSON.parse(raw); }
+    catch {
+      const jsonStart = raw.indexOf('{');
+      const jsonEnd = raw.lastIndexOf('}');
+      if (jsonStart < 0 || jsonEnd <= jsonStart) return;
+      try { parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)); } catch { return; }
+    }
     const memos = Array.isArray(parsed?.memories) ? parsed.memories : [];
     if (!memos.length) return;
 
     // Fuzzy dedup against the full pool (not just last 7 days).
     const existing = cache.slice();
     let added = 0;
-    const rejectPrefix = /^(user (asked|wondered|requested|wanted to|is trying to|is working on|is exploring|is debugging)|user (ran|tried|tested|executed|fixed|wrote|created)\b)/i;
     for (const m of memos) {
-      if (!m || typeof m.content !== 'string') continue;
-      const trimmed = m.content.trim();
-      if (trimmed.length < 8 || trimmed.length > 400) continue;
-      const salience = Number(m.salience);
-      if (Number.isFinite(salience) && salience < 3) continue;
-      // Reject items that describe ephemeral user actions rather than durable facts.
-      if (rejectPrefix.test(trimmed)) continue;
-      if (_memIsDuplicateFuzzy(trimmed, existing)) continue;
-      const tagsArr = Array.isArray(m.tags) ? m.tags.slice(0, 10) : [];
-      const type = ['fact','preference','event','skill','note'].includes(m.type) ? m.type : 'fact';
-      const saved = await memSave({ content: trimmed, tags: tagsArr, type, source: 'auto', convId: convId || activeConvId || null, sourceTurn: Number.isFinite(lc) ? lc : null });
+      const validated = _memValidateExtracted(m);
+      if (!validated) continue;
+      if (_memIsDuplicateFuzzy(validated.content, existing)) continue;
+      const saved = await memSave({
+        content: validated.content,
+        tags: validated.tags,
+        type: validated.type,
+        source: 'auto',
+        convId: convId || activeConvId || null,
+        sourceTurn: Number.isFinite(lc) ? lc : null,
+        supersedesIds: validated.supersedesIds
+      });
       existing.push(saved);
       added++;
     }
@@ -5656,6 +5784,8 @@ async function openMemoryModal() {
   document.getElementById('memSearchInput').value = '';
   document.getElementById('memFilterType').value = '';
   document.getElementById('memFilterSource').value = '';
+  const retiredEl = document.getElementById('memShowRetired');
+  if (retiredEl) retiredEl.checked = false;
   document.getElementById('memAddContent').value = '';
   document.getElementById('memAddTags').value = '';
   document.getElementById('memAddType').value = 'fact';
@@ -5682,9 +5812,17 @@ function renderMemoryList() {
   const q = (document.getElementById('memSearchInput')?.value || '').toLowerCase().trim();
   const typeFilter = document.getElementById('memFilterType')?.value || '';
   const srcFilter = document.getElementById('memFilterSource')?.value || '';
+  const showRetired = !!document.getElementById('memShowRetired')?.checked;
   const now = Date.now();
 
-  let records = _memCache.slice().sort((a, b) => (b.pinned - a.pinned) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+  let records = _memCache.slice().sort((a, b) => {
+    // Retired records sink to the bottom; then pinned first; then by updatedAt desc.
+    const ra = a.superseded ? 1 : 0, rb = b.superseded ? 1 : 0;
+    if (ra !== rb) return ra - rb;
+    if ((b.pinned ? 1 : 0) !== (a.pinned ? 1 : 0)) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+  if (!showRetired) records = records.filter(r => !r.superseded);
   if (typeFilter) records = records.filter(r => r.type === typeFilter);
   if (srcFilter) records = records.filter(r => (r.source || 'manual') === srcFilter);
   if (_memActiveTag) records = records.filter(r => (r.tags || []).includes(_memActiveTag));
@@ -5695,15 +5833,17 @@ function renderMemoryList() {
     return false;
   });
 
-  // Tag chip rail
+  // Tag chip rail — computed over the visible pool (respects the show-retired toggle).
   const tagEl = document.getElementById('memTagChips');
   if (tagEl) {
-    const pairs = _memCollectTags(_memCache);
+    const tagPool = showRetired ? _memCache : _memCache.filter(r => !r.superseded);
+    const pairs = _memCollectTags(tagPool);
     tagEl.innerHTML = pairs.map(([t, n]) => `<button type="button" onclick="memFilterByTag('${esc(t)}')" style="padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:${_memActiveTag === t ? 'var(--accent-orange)' : 'transparent'};color:${_memActiveTag === t ? '#fff' : 'var(--text-secondary)'};font-size:10px;cursor:pointer;font-family:'JetBrains Mono',monospace">#${esc(t)} <span style="opacity:.6">${n}</span></button>`).join('');
   }
 
+  const retiredCount = _memCache.filter(r => r.superseded).length;
   const statsEl = document.getElementById('memStats');
-  if (statsEl) statsEl.textContent = `${records.length} shown · ${_memCache.length} total${_memActiveTag ? ` · filter: #${_memActiveTag}` : ''}`;
+  if (statsEl) statsEl.textContent = `${records.length} shown · ${_memCache.length} total${retiredCount ? ` · ${retiredCount} retired` : ''}${_memActiveTag ? ` · filter: #${_memActiveTag}` : ''}`;
 
   if (!records.length) {
     listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px">${_memCache.length ? 'No memories match current filters.' : 'No memories yet. Auto-extraction will save durable facts as you chat, or the agent can call memory_save.'}</div>`;
@@ -5716,19 +5856,26 @@ function renderMemoryList() {
     const tagHtml = (r.tags || []).map(t => `<span style="padding:1px 6px;background:var(--bg-root);border-radius:8px;font-size:10px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace">#${esc(t)}</span>`).join(' ');
     const srcLabel = r.source || 'manual';
     const typeColor = r.type === 'preference' ? 'var(--accent-orange)' : r.type === 'event' ? 'var(--accent-cyan)' : r.type === 'skill' ? '#b388ff' : r.type === 'note' ? 'var(--text-dim)' : 'var(--text-secondary)';
-    return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg-panel)">
+    const retired = !!r.superseded;
+    const replacedHint = retired && r.supersededBy ? `<span>\u00B7</span><span title="Replaced by" style="color:var(--accent-cyan)">\u21B3 ${esc(r.supersededBy.slice(0, 12))}</span>` : retired ? `<span>\u00B7</span><span style="color:var(--text-dim)">retired</span>` : '';
+    const retiresHint = Array.isArray(r.supersedes) && r.supersedes.length ? `<span>\u00B7</span><span title="This memory retires ${r.supersedes.length} older one(s)">retires ${r.supersedes.length}</span>` : '';
+    return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg-panel);opacity:${retired ? '0.55' : '1'}">
       <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
-        <div style="flex:1;font-size:12px;color:var(--text-primary);line-height:1.5;word-break:break-word">${esc(r.content)}</div>
+        <div style="flex:1;font-size:12px;color:var(--text-primary);line-height:1.5;word-break:break-word;${retired ? 'text-decoration:line-through' : ''}">${esc(r.content)}</div>
         <button type="button" title="${r.pinned ? 'Unpin' : 'Pin'}" onclick="memTogglePin('${r.id}')" style="background:transparent;border:none;color:${r.pinned ? 'var(--accent-orange)' : 'var(--text-dim)'};cursor:pointer;font-size:14px;padding:0 4px">\u{1F4CC}</button>
         <button type="button" title="Delete" onclick="memDeleteFromUI('${r.id}')" style="background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:0 4px">\u2715</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--text-dim);font-family:'JetBrains Mono',monospace">
         <span style="color:${typeColor}">${esc(r.type || 'fact')}</span>
         <span>\u00B7</span>
+        <span title="id">${esc(r.id.slice(0, 12))}</span>
+        <span>\u00B7</span>
         <span>${esc(dateStr)} (${esc(relStr)})</span>
         <span>\u00B7</span>
         <span>${esc(srcLabel)}</span>
         ${r.recallCount ? `<span>\u00B7</span><span title="Times injected into prompt">recalled ${r.recallCount}\u00D7</span>` : ''}
+        ${retiresHint}
+        ${replacedHint}
         ${tagHtml ? `<span>\u00B7</span>${tagHtml}` : ''}
       </div>
     </div>`;
@@ -5780,30 +5927,15 @@ function memImport() {
       const data = JSON.parse(text);
       const list = Array.isArray(data) ? data : (Array.isArray(data.memories) ? data.memories : []);
       if (!list.length) { alert('No memories found in file.'); return; }
-      const cache = await memLoadCache();
-      const existing = new Set(cache.map(m => m.id));
-      let added = 0;
+      let added = 0, updated = 0, skipped = 0;
       for (const m of list) {
-        if (!m || typeof m.content !== 'string') continue;
-        const rec = {
-          id: (m.id && !existing.has(m.id)) ? m.id : genMemId(),
-          content: m.content,
-          type: m.type || 'fact',
-          tags: Array.isArray(m.tags) ? m.tags.map(t => String(t).toLowerCase()) : [],
-          createdAt: Number.isFinite(m.createdAt) ? m.createdAt : Date.now(),
-          updatedAt: Date.now(),
-          lastRecalledAt: m.lastRecalledAt || null,
-          recallCount: m.recallCount || 0,
-          pinned: !!m.pinned,
-          convId: m.convId || null,
-          sourceTurn: m.sourceTurn ?? null,
-          source: m.source || 'manual'
-        };
-        await memPutRaw(rec);
-        added++;
+        const result = await _memMergeIncoming(m);
+        if (result === 'added') added++;
+        else if (result === 'updated') updated++;
+        else skipped++;
       }
       renderMemoryList();
-      alert(`Imported ${added} memories.`);
+      alert(`Import done — added ${added}, updated ${updated}, skipped ${skipped}.`);
     } catch (e) { alert('Import failed: ' + e.message); }
   };
   inp.click();
@@ -5822,17 +5954,61 @@ async function toolMemorySave(input) {
   if (!content) return 'Error: content is required.';
   const tags = Array.isArray(input?.tags) ? input.tags : [];
   const type = ['fact','preference','event','skill','note'].includes(input?.type) ? input.type : 'fact';
-  const rec = await memSave({ content, tags, type, source: 'tool' });
+  const supersedesIds = Array.isArray(input?.supersedes_ids)
+    ? input.supersedes_ids.filter(s => typeof s === 'string' && s.startsWith('mem_'))
+    : [];
+  const rec = await memSave({ content, tags, type, source: 'tool', supersedesIds });
   if (document.getElementById('memoryModal')?.classList.contains('show')) renderMemoryList();
-  return `Saved memory ${rec.id} (${rec.type}${rec.tags.length ? ', tags: ' + rec.tags.map(t => '#' + t).join(' ') : ''}).`;
+  const supersedesHint = rec.supersedes.length ? `, retired ${rec.supersedes.length} old memor${rec.supersedes.length === 1 ? 'y' : 'ies'}` : '';
+  return `Saved memory ${rec.id} (${rec.type}${rec.tags.length ? ', tags: ' + rec.tags.map(t => '#' + t).join(' ') : ''}${supersedesHint}).`;
+}
+
+async function toolMemoryUpdate(input) {
+  if (!memIsEnabled()) return 'Error: long-term memory is disabled in Settings.';
+  const id = String(input?.id || '').trim();
+  if (!id) return 'Error: id is required.';
+  const cache = await memLoadCache();
+  const rec = cache.find(m => m.id === id);
+  if (!rec) return `Error: memory ${id} not found.`;
+  const patch = {};
+  if (typeof input.content === 'string') {
+    const t = input.content.trim();
+    if (t.length < 4 || t.length > 400) return 'Error: content must be 4-400 chars.';
+    patch.content = t;
+  }
+  if (Array.isArray(input.tags)) patch.tags = _memSanitizeTags(input.tags);
+  if (['fact','preference','event','skill','note'].includes(input.type)) patch.type = input.type;
+  if (typeof input.pinned === 'boolean') patch.pinned = input.pinned;
+  if (!Object.keys(patch).length) return 'Error: provide at least one of content / tags / type / pinned.';
+  const updated = await memUpdate(id, patch);
+  if (document.getElementById('memoryModal')?.classList.contains('show')) renderMemoryList();
+  return `Updated memory ${id} (${Object.keys(patch).join(', ')}).`;
+}
+
+async function toolMemoryForget(input) {
+  if (!memIsEnabled()) return 'Error: long-term memory is disabled in Settings.';
+  const id = String(input?.id || '').trim();
+  if (!id) return 'Error: id is required.';
+  const cache = await memLoadCache();
+  const rec = cache.find(m => m.id === id);
+  if (!rec) return `Error: memory ${id} not found.`;
+  if (rec.superseded) return `Memory ${id} was already retired.`;
+  const reason = typeof input?.reason === 'string' ? input.reason.trim() : '';
+  const newTags = _memSanitizeTags([...(rec.tags || []), reason ? 'forgotten:' + reason.slice(0, 30).replace(/\s+/g, '-') : 'forgotten']);
+  await memUpdate(id, { tags: newTags });
+  // Then mark superseded without a replacement (supersededBy stays null).
+  await memUpdate(id, { superseded: true, supersededBy: null });
+  if (document.getElementById('memoryModal')?.classList.contains('show')) renderMemoryList();
+  return `Forgot memory ${id}${reason ? ` (reason: ${reason})` : ''}. It will no longer be recalled.`;
 }
 
 async function toolMemorySearch(input) {
   if (!memIsEnabled()) return 'Error: long-term memory is disabled in Settings.';
   const q = (input?.query || '').trim();
   const limit = Math.min(25, Math.max(1, Number(input?.limit) || 8));
+  const includeSuperseded = !!input?.include_superseded;
   const all = await memLoadCache();
-  let pool = all;
+  let pool = includeSuperseded ? all : all.filter(r => !r.superseded);
   if (Array.isArray(input?.tags) && input.tags.length) {
     const want = new Set(input.tags.map(t => String(t).toLowerCase()));
     pool = pool.filter(r => (r.tags || []).some(t => want.has(t)));
@@ -5843,7 +6019,8 @@ async function toolMemorySearch(input) {
   const now = Date.now();
   return ranked.map(({ rec, score }) => {
     const tagStr = (rec.tags || []).map(t => '#' + t).join(' ');
-    return `- [${_memDateLabel(rec.createdAt)}, ${_memRelativeLabel(rec.createdAt, now)}${tagStr ? ', ' + tagStr : ''}${rec.pinned ? ', pinned' : ''}] (score ${score.toFixed(2)}) ${rec.content}`;
+    const retiredHint = rec.superseded ? ', retired' : '';
+    return `- {${rec.id}} [${_memDateLabel(rec.createdAt)}, ${_memRelativeLabel(rec.createdAt, now)}${tagStr ? ', ' + tagStr : ''}${rec.pinned ? ', pinned' : ''}${retiredHint}] (score ${score.toFixed(2)}) ${rec.content}`;
   }).join('\n');
 }
 
@@ -5993,8 +6170,10 @@ function rebuildToolDefs(headId = activeEntryId) {
   // Add long-term memory tools when enabled
   if (memIsEnabled()) {
     allToolsAnthropic.push(
-      { name: 'memory_save', description: 'Save a durable fact to long-term memory. Use sparingly and only for information that should survive across conversations: user preferences, project constraints, decisions made, entity relationships, or environment facts the user stated. Do NOT save ephemeral task details, debugging steps, or public knowledge. Each fact must be self-contained, stated in third-person ("User prefers X"), <= 220 chars.', input_schema: { type: 'object', properties: { content: { type: 'string', description: 'The fact to remember, stated plainly and in third-person.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase topic / entity tags for retrieval (e.g. ["python","testing"]).' }, type: { type: 'string', enum: ['fact','preference','event','skill','note'], description: 'Classification. Defaults to fact.' } }, required: ['content'] } },
-      { name: 'memory_search', description: 'Search long-term memory for facts relevant to a query. Returns matching entries with their time labels, tags, and relevance scores. Use when the user asks about prior context, preferences, or decisions.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Free-text query describing what to recall.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Optional: restrict results to entries with these tags.' }, limit: { type: 'integer', description: 'Max results (1-25). Default 8.' } }, required: ['query'] } }
+      { name: 'memory_save', description: 'Save a durable fact to long-term memory. Use sparingly and only for information that should survive across conversations: user preferences, project constraints, decisions made, entity relationships, or environment facts the user stated. Do NOT save ephemeral task details, debugging steps, or public knowledge. Each fact must be self-contained, stated in third-person ("User prefers X"), <= 220 chars. If this fact REPLACES an existing memory (user changed their mind, old fact is stale), pass supersedes_ids with the ids of the memories to retire.', input_schema: { type: 'object', properties: { content: { type: 'string', description: 'The fact to remember, stated plainly and in third-person.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase topic / entity tags for retrieval (e.g. ["python","testing"]).' }, type: { type: 'string', enum: ['fact','preference','event','skill','note'], description: 'Classification. Defaults to fact.' }, supersedes_ids: { type: 'array', items: { type: 'string' }, description: 'Optional. Ids of existing memories that this new memory replaces; they will be retired.' } }, required: ['content'] } },
+      { name: 'memory_search', description: 'Search long-term memory for facts relevant to a query. Returns matching entries with their ids, time labels, tags, and relevance scores. Retired (superseded) memories are excluded unless include_superseded is true.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Free-text query describing what to recall.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Optional: restrict results to entries with these tags.' }, limit: { type: 'integer', description: 'Max results (1-25). Default 8.' }, include_superseded: { type: 'boolean', description: 'If true, include retired memories in the results.' } }, required: ['query'] } },
+      { name: 'memory_update', description: 'Update fields of an existing memory in place. Use when a stored fact needs a clarification or tag fix. Fails if no memory has that id. Bumps updatedAt.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id (e.g. mem_abc123).' }, content: { type: 'string', description: 'New content, 4-400 chars.' }, tags: { type: 'array', items: { type: 'string' } }, type: { type: 'string', enum: ['fact','preference','event','skill','note'] }, pinned: { type: 'boolean' } }, required: ['id'] } },
+      { name: 'memory_forget', description: 'Retire a memory so it no longer surfaces in recall or search. Soft delete — the record is kept but marked superseded. Use when the user explicitly tells you to forget something, or when a memory is demonstrably wrong with no obvious replacement.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id.' }, reason: { type: 'string', description: 'Optional short tag indicating why (e.g. "stale", "incorrect", "user-request").' } }, required: ['id'] } }
     );
   }
   allToolsOpenAI = allToolsAnthropic.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
@@ -6042,6 +6221,8 @@ async function executeTool(name, input) {
       case 'ExitPlanMode': return await toolExitPlanMode(input);
       case 'memory_save': return await toolMemorySave(input);
       case 'memory_search': return await toolMemorySearch(input);
+      case 'memory_update': return await toolMemoryUpdate(input);
+      case 'memory_forget': return await toolMemoryForget(input);
       default:
         // Skill tool?
         if (skillToolHandlers[name]) {
