@@ -1772,6 +1772,264 @@ const CONV_META_KEY = 'list';
 
 function genConvId() { return 'conv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+// ═══════════════════════════════════════════════════════════════════
+// BLOB STORE — content-addressed binary storage
+// vfs file nodes hold {hash,size}; bytes live in OPFS (preferred) or IDB.
+// Refcounts live in IDB so unref can atomically delete orphan blobs.
+// ═══════════════════════════════════════════════════════════════════
+const BLOB_DB_NAME = 'ba_blobs';
+const BLOB_DB_VER = 1;
+const BLOB_STORE_NAME = 'blobs';
+const BLOB_REFS_STORE = 'blob_refs';
+
+function openBlobDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(BLOB_DB_NAME, BLOB_DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(BLOB_STORE_NAME)) db.createObjectStore(BLOB_STORE_NAME);
+      if (!db.objectStoreNames.contains(BLOB_REFS_STORE)) db.createObjectStore(BLOB_REFS_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function _blobSha256Hex(bytes) {
+  // Guard: Chrome's crypto.subtle.digest has thrown EncodingError on views
+  // whose underlying ArrayBuffer came straight from FileReader.readAsArrayBuffer
+  // for certain large files. Copy to a fresh ArrayBuffer first.
+  let input = bytes;
+  if (!(bytes instanceof Uint8Array)) input = new Uint8Array(bytes);
+  if (input.byteOffset !== 0 || input.byteLength !== input.buffer.byteLength) {
+    const copy = new Uint8Array(input.byteLength);
+    copy.set(input);
+    input = copy;
+  }
+  const h = await crypto.subtle.digest('SHA-256', input);
+  const arr = new Uint8Array(h);
+  let s = '';
+  for (let i = 0; i < arr.length; i++) s += arr[i].toString(16).padStart(2, '0');
+  return s;
+}
+
+let _blobBackend = 'idb';
+let _opfsBlobsDirPromise = null;
+async function _opfsBlobsDir() {
+  if (!_opfsBlobsDirPromise) {
+    _opfsBlobsDirPromise = (async () => {
+      if (!navigator?.storage?.getDirectory) throw new Error('OPFS unavailable');
+      const root = await navigator.storage.getDirectory();
+      return root.getDirectoryHandle('blobs', { create: true });
+    })();
+  }
+  return _opfsBlobsDirPromise;
+}
+
+async function _initBlobBackend() {
+  try {
+    const dir = await _opfsBlobsDir();
+    // Some file:// contexts hand out a handle but fail on actual writes; probe.
+    // Dot-prefixed names have caused EncodingError on some Chrome builds, so
+    // the probe uses a plain ASCII name.
+    const probeName = 'ba_blob_probe';
+    const probe = await dir.getFileHandle(probeName, { create: true });
+    const writable = await probe.createWritable();
+    await writable.write(new Uint8Array([1]));
+    await writable.close();
+    await dir.removeEntry(probeName).catch(() => {});
+    _blobBackend = 'opfs';
+  } catch (e) {
+    console.warn('[blobStore] OPFS unavailable, falling back to IDB:', e?.message || e);
+    _blobBackend = 'idb';
+    _opfsBlobsDirPromise = null;
+  }
+}
+
+// Flag set when an OPFS runtime error forces a permanent downgrade this session.
+let _opfsDowngraded = false;
+function _downgradeToIdb(reason) {
+  if (_opfsDowngraded) return;
+  _opfsDowngraded = true;
+  _blobBackend = 'idb';
+  _opfsBlobsDirPromise = null;
+  console.warn('[blobStore] OPFS runtime error, switching to IDB backend:', reason);
+}
+
+async function _blobBackendHas(hash) {
+  if (_blobBackend === 'opfs') {
+    try { const dir = await _opfsBlobsDir(); await dir.getFileHandle(hash); return true; }
+    catch (e) {
+      // "not found" is expected; only downgrade on unexpected errors.
+      if (e?.name && e.name !== 'NotFoundError') _downgradeToIdb(e.message);
+      if (_blobBackend === 'opfs') return false;
+    }
+  }
+  const db = await openBlobDB();
+  return new Promise(res => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readonly');
+    const req = tx.objectStore(BLOB_STORE_NAME).getKey(hash);
+    req.onsuccess = () => res(req.result !== undefined);
+    req.onerror = () => res(false);
+  });
+}
+
+async function _blobBackendPut(hash, bytes) {
+  if (_blobBackend === 'opfs') {
+    try {
+      const dir = await _opfsBlobsDir();
+      const fh = await dir.getFileHandle(hash, { create: true });
+      const writable = await fh.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      return;
+    } catch (e) {
+      _downgradeToIdb(`put(${hash.slice(0, 8)}) — ${e?.message || e}`);
+      // fall through to IDB
+    }
+  }
+  const db = await openBlobDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readwrite');
+    tx.objectStore(BLOB_STORE_NAME).put(bytes, hash);
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+async function _blobBackendGet(hash) {
+  if (_blobBackend === 'opfs') {
+    try {
+      const dir = await _opfsBlobsDir();
+      const fh = await dir.getFileHandle(hash);
+      const file = await fh.getFile();
+      return new Uint8Array(await file.arrayBuffer());
+    } catch (e) {
+      if (e?.name === 'NotFoundError') return null;
+      _downgradeToIdb(`get(${hash.slice(0, 8)}) — ${e?.message || e}`);
+      // fall through to IDB
+    }
+  }
+  const db = await openBlobDB();
+  return new Promise(res => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readonly');
+    const req = tx.objectStore(BLOB_STORE_NAME).get(hash);
+    req.onsuccess = () => {
+      const r = req.result;
+      if (!r) return res(null);
+      res(r instanceof Uint8Array ? r : new Uint8Array(r));
+    };
+    req.onerror = () => res(null);
+  });
+}
+
+async function _blobBackendDelete(hash) {
+  if (_blobBackend === 'opfs') {
+    try { const dir = await _opfsBlobsDir(); await dir.removeEntry(hash); return; }
+    catch (e) {
+      if (e?.name === 'NotFoundError') return;
+      _downgradeToIdb(`delete(${hash.slice(0, 8)}) — ${e?.message || e}`);
+      // fall through to IDB
+    }
+  }
+  const db = await openBlobDB();
+  return new Promise(res => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readwrite');
+    tx.objectStore(BLOB_STORE_NAME).delete(hash);
+    tx.oncomplete = res;
+    tx.onerror = res;
+  });
+}
+
+async function _refAdjust(hash, delta) {
+  const db = await openBlobDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(BLOB_REFS_STORE, 'readwrite');
+    const store = tx.objectStore(BLOB_REFS_STORE);
+    const getReq = store.get(hash);
+    getReq.onsuccess = () => {
+      const cur = getReq.result || 0;
+      const next = cur + delta;
+      if (next <= 0) store.delete(hash);
+      else store.put(next, hash);
+    };
+    tx.oncomplete = () => res((getReq.result || 0) + delta);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+async function _refGet(hash) {
+  const db = await openBlobDB();
+  return new Promise(res => {
+    const tx = db.transaction(BLOB_REFS_STORE, 'readonly');
+    const req = tx.objectStore(BLOB_REFS_STORE).get(hash);
+    req.onsuccess = () => res(req.result || 0);
+    req.onerror = () => res(0);
+  });
+}
+
+const blobStore = {
+  get backend() { return _blobBackend; },
+  async init() { await _initBlobBackend(); },
+  // Hash + store bytes, increment refcount. Returns {hash,size}.
+  async put(bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let hash;
+    try { hash = await _blobSha256Hex(arr); }
+    catch (e) { console.error('[blobStore.put] hash step failed for', arr.length, 'bytes:', e); throw e; }
+    try {
+      if (!(await _blobBackendHas(hash))) await _blobBackendPut(hash, arr);
+    } catch (e) { console.error('[blobStore.put] backend write failed (', _blobBackend, ') for', arr.length, 'bytes:', e); throw e; }
+    try { await _refAdjust(hash, +1); }
+    catch (e) { console.error('[blobStore.put] refcount bump failed:', e); throw e; }
+    return { hash, size: arr.length };
+  },
+  // Store bytes under a known hash (from sync manifest), increment refcount.
+  async putWithHash(hash, bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (!(await _blobBackendHas(hash))) await _blobBackendPut(hash, arr);
+    await _refAdjust(hash, +1);
+    return { hash, size: arr.length };
+  },
+  async ref(hash) { await _refAdjust(hash, +1); },
+  async unref(hash) {
+    const next = await _refAdjust(hash, -1);
+    if (next <= 0) await _blobBackendDelete(hash);
+    return next;
+  },
+  async get(hash) { return _blobBackendGet(hash); },
+  async has(hash) { return _blobBackendHas(hash); },
+  async refGet(hash) { return _refGet(hash); },
+};
+
+// Walk a vfs subtree and unref every binary leaf's blob. Fire-and-forget.
+function _unrefVfsSubtree(node) {
+  if (!node) return;
+  if (node.type === 'file' && node.binary && node.hash) {
+    blobStore.unref(node.hash).catch(e => console.warn('blob unref failed:', e));
+    return;
+  }
+  if (node.type === 'dir' && node.children) {
+    for (const ch of Object.values(node.children)) _unrefVfsSubtree(ch);
+  }
+}
+
+// Deep-clone a vfs node into destParent[destName], bumping blob refs for
+// any binary leaves. Source is not mutated. Used by rename/duplicate.
+async function _vfsGraftNode(sourceNode, destParent, destName) {
+  if (sourceNode.type === 'file') {
+    const copy = { ...sourceNode, modified: Date.now() };
+    destParent.children[destName] = copy;
+    if (copy.binary && copy.hash) await blobStore.ref(copy.hash);
+    return;
+  }
+  const dir = { type: 'dir', children: {} };
+  destParent.children[destName] = dir;
+  for (const [k, ch] of Object.entries(sourceNode.children || {})) {
+    await _vfsGraftNode(ch, dir, k);
+  }
+}
+
 function openConvDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(CONV_DB_NAME, CONV_DB_VER);
@@ -1794,7 +2052,14 @@ async function loadConvDataFromDB(id) {
 }
 
 async function deleteConvDataFromDB(id) {
-  try { const db = await openConvDB(); const tx = db.transaction(CONV_STORE, 'readwrite'); tx.objectStore(CONV_STORE).delete(id); } catch {}
+  try {
+    // Unref any blob-backed binary files this conv owned before dropping the record.
+    const prior = await loadConvDataFromDB(id);
+    if (prior?.vfs) _unrefVfsSubtree(prior.vfs);
+    const db = await openConvDB();
+    const tx = db.transaction(CONV_STORE, 'readwrite');
+    tx.objectStore(CONV_STORE).delete(id);
+  } catch {}
 }
 
 async function loadConvMetaFromDB() {
@@ -1921,7 +2186,7 @@ async function switchConversation(id, skipSave) {
   if (data?.chatHTML) chatEl.innerHTML = data.chatHTML;
   else chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation loaded.</div></div>';
   // Batch remount skills — single renderFileTree at the end
-  for (const s of skills) { if (s.active) mountSkillToVfs(s, true); }
+  for (const s of skills) { if (s.active) await mountSkillToVfs(s, true); }
   renderFileTree();
   updateMemoryUI();
   closeFileViewer(true);
@@ -2055,7 +2320,11 @@ async function ensurePyodide() {
   }
 }
 
-const BINARY_EXTS = new Set(['pptx','xlsx','xls','docx','doc','pdf','png','jpg','jpeg','gif','bmp','ico','webp','svg','zip','gz','tar','whl','pyc','so','dll','exe','bin','dat','sqlite','db','mp3','mp4','wav','ogg','ttf','otf','woff','woff2']);
+const BINARY_EXTS = new Set(['pptx','xlsx','xls','docx','doc','pdf','png','jpg','jpeg','gif','bmp','ico','webp','svg','zip','gz','tar','whl','pyc','so','dll','exe','bin','dat','sqlite','db','mp3','mp4','wav','ogg','flac','aac','m4a','opus','webm','mov','avi','mkv','ttf','otf','woff','woff2','rar','7z','bz2','xz','iso','dmg','deb','rpm','jar','class','o','a','lib','obj','psd','ai','sketch','fig','raw','tiff','heic','heif','apk','ipa']);
+// Any file above this threshold is treated as binary regardless of extension
+// — avoids loading multi-MB "text" strings that freeze the renderer.
+const MAX_TEXT_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
 const IMAGE_EXTS = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico']);
 const OFFICE_EXTS = new Set(['pptx','xlsx','xls','docx','doc']);
 
@@ -2063,28 +2332,47 @@ function vfsStat(path) {
   const node = vfsResolve(path);
   if (!node) return null;
   if (node.type === 'dir') return { path: normPath(path), type: 'dir', size: 0, binary: false };
-  return {
-    path: normPath(path),
-    type: 'file',
-    binary: !!node.binary,
-    size: node.binary && node.bytes ? node.bytes.length : (node.content || '').length,
-  };
+  const size = node.binary ? (node.size ?? (node.bytes ? node.bytes.length : 0)) : (node.content || '').length;
+  return { path: normPath(path), type: 'file', binary: !!node.binary, size };
 }
 
-// Write binary file to VFS (stores Uint8Array)
-function vfsWriteBinary(path, bytes, skipRender = false) {
+// Write binary bytes to the VFS. Bytes go to the content-addressed blob store;
+// the vfs node only carries {hash,size}. Async — callers must await.
+async function vfsWriteBinary(path, bytes, skipRender = false) {
   path = normPath(path);
   const parts = path.slice(1).split('/'); const fn = parts.pop(); let n = vfs;
   for (const p of parts) { if (!n.children[p]) n.children[p] = { type: 'dir', children: {} }; n = n.children[p]; }
-  n.children[fn] = { type: 'file', content: `[Binary: ${fn}, ${bytes.length} bytes]`, binary: true, bytes: new Uint8Array(bytes), modified: Date.now() };
+  const existing = n.children[fn];
+  const { hash, size } = await blobStore.put(bytes);
+  // Balance refcount when overwriting: drop the ref held by the old node,
+  // or if same hash, drop the duplicate ref we just added.
+  if (existing?.type === 'file' && existing.binary && existing.hash) {
+    await blobStore.unref(existing.hash);
+  } else if (existing?.type === 'file' && existing.binary && existing.bytes && !existing.hash) {
+    // Legacy in-memory node with raw bytes — no blob ref to drop.
+  }
+  n.children[fn] = {
+    type: 'file',
+    content: `[Binary: ${fn}, ${size} bytes]`,
+    binary: true,
+    hash,
+    size,
+    modified: Date.now(),
+  };
   if (!skipRender) renderFileTree();
-  return { ok: true, path, bytes: bytes.length };
+  return { ok: true, path, bytes: size, hash };
 }
 
-function vfsGetBinary(path) {
+// Fetch binary bytes for a path. Async — returns Uint8Array or null.
+async function vfsGetBinary(path) {
   const node = vfsResolve(path);
   if (!node || node.type !== 'file') return null;
-  return node.binary ? node.bytes : null;
+  if (!node.binary) return null;
+  // Preferred path: node carries a blob hash.
+  if (node.hash) return blobStore.get(node.hash);
+  // Legacy path: unmigrated in-memory bytes.
+  if (node.bytes) return node.bytes;
+  return null;
 }
 
 function getPythonNativePathHint(msg) {
@@ -2109,6 +2397,68 @@ function getPythonNativePathHint(msg) {
   return '\nHint: this library may require a real native temp path. Try workspacefs.materialize_to_tmp("/path/in.ext", binary=True), run the library on the returned /tmp path, then write results back with workspacefs.persist_tmp_file("/tmp/out.ext", "/outputs/out.ext", binary=True).';
 }
 
+// ── Pyodide binary hydration bridge ───────────────────────────────
+// Pyodide runs on the main thread so Python's sync read_bytes can't await.
+// Before each exec we scan the code for literal binary paths, pull their bytes
+// out of the blob store into _pyHydratedBytes, and have the JS bridge read
+// from that cache. write_bytes writes into _pyDirtyWrites (sync), and _pyFlush
+// persists them to the blob store after runPythonAsync returns.
+const _pyHydratedBytes = new Map(); // path → Uint8Array
+const _pyDirtyWrites = new Map();   // path → Uint8Array
+const _pyPendingUnrefs = [];        // hashes to drop after runPythonAsync
+
+const _PY_BIN_PATH_PATTERNS = [
+  /(?:workspacefs\.)?read_bytes\s*\(\s*(['"])([^'"]+)\1/g,
+  /materialize_to_tmp\s*\(\s*(['"])([^'"]+)\1/g,
+  /open\s*\(\s*(['"])([^'"]+)\1\s*,\s*['"][rab+]*b[rab+]*['"]/g,
+  /(?:Path|pathlib\.Path|WorkspacePath)\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*(?:read_bytes|open)/g,
+];
+
+function _pyScanBinaryPaths(code) {
+  const paths = new Set();
+  for (const re of _PY_BIN_PATH_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(code)) !== null) paths.add(m[2]);
+  }
+  return [...paths];
+}
+
+async function _pyHydrate(paths) {
+  _pyHydratedBytes.clear();
+  _pyDirtyWrites.clear();
+  for (const p of paths) {
+    const np = normPath(p);
+    const node = vfsResolve(np);
+    if (!node || node.type !== 'file' || !node.binary) continue;
+    if (node.hash) {
+      const bytes = await blobStore.get(node.hash);
+      if (bytes) _pyHydratedBytes.set(np, bytes);
+    } else if (node.bytes) {
+      _pyHydratedBytes.set(np, node.bytes);
+    }
+  }
+}
+
+async function _pyFlush() {
+  const writes = [..._pyDirtyWrites.entries()];
+  const unrefs = _pyPendingUnrefs.slice();
+  _pyDirtyWrites.clear();
+  _pyPendingUnrefs.length = 0;
+  _pyHydratedBytes.clear();
+  // Drop ref on any blob whose vfs node we replaced with a pending placeholder
+  // during this exec — vfsWriteBinary below can't see the original hash because
+  // the placeholder overwrote it synchronously.
+  for (const h of unrefs) {
+    try { await blobStore.unref(h); } catch (e) { console.warn('pyFlush unref failed:', e); }
+  }
+  for (const [path, bytes] of writes) {
+    try { await vfsWriteBinary(path, bytes, true); }
+    catch (e) { console.warn('pyFlush write failed for', path, e); }
+  }
+  if (writes.length) renderFileTree();
+}
+
 async function toolPythonExec(input) {
   const code = input.code || '';
   const packages = input.packages || [];
@@ -2120,6 +2470,10 @@ async function toolPythonExec(input) {
         catch (e) { return `Error installing ${pkg}: ${e.message}. This package may require C extensions not available in browser Python.`; }
       }
     }
+
+    // Hydrate binary bytes for paths referenced by the code, so Python's sync
+    // read_bytes/materialize_to_tmp can serve bytes without an await round-trip.
+    await _pyHydrate(_pyScanBinaryPaths(code));
 
     if (!pyodide.__workspacefsRegistered) {
       pyodide.registerJsModule('workspacefs_js', {
@@ -2138,22 +2492,59 @@ async function toolPythonExec(input) {
           return true;
         },
         read_bytes(path) {
-          const st = vfsStat(path);
-          if (!st) throw new Error(`File not found: ${path}`);
-          if (st.type !== 'file') throw new Error(`Not a file: ${path}`);
-          if (st.binary) {
-            const bytes = vfsGetBinary(path);
-            if (!bytes) throw new Error(`Binary file not found: ${path}`);
-            return new Uint8Array(bytes);
+          const p = normPath(path);
+          // Read-after-write within this exec: check staged writes first.
+          if (_pyDirtyWrites.has(p)) return new Uint8Array(_pyDirtyWrites.get(p));
+          // Pre-hydrated binary: serve from cache.
+          if (_pyHydratedBytes.has(p)) return new Uint8Array(_pyHydratedBytes.get(p));
+          const st = vfsStat(p);
+          if (!st) throw new Error(`File not found: ${p}`);
+          if (st.type !== 'file') throw new Error(`Not a file: ${p}`);
+          if (!st.binary) {
+            // Text file: encode on the fly (same semantics as before).
+            const r = vfsRead(p);
+            if (r.error) throw new Error(r.error);
+            return new TextEncoder().encode(r.content);
           }
-          const r = vfsRead(path);
-          if (r.error) throw new Error(r.error);
-          return new TextEncoder().encode(r.content);
+          // Binary but not pre-hydrated. Tell the caller to hydrate.
+          throw new Error(`[workspacefs] Binary bytes for ${p} are not pre-hydrated. ` +
+            `Use a literal path in read_bytes/open(..., 'rb'), or call 'await workspacefs.hydrate("${p}")' before reading.`);
+        },
+        async hydrate_bytes(path) {
+          const p = normPath(path);
+          const node = vfsResolve(p);
+          if (!node || node.type !== 'file' || !node.binary) return false;
+          if (node.hash) {
+            const bytes = await blobStore.get(node.hash);
+            if (!bytes) return false;
+            _pyHydratedBytes.set(p, bytes);
+            return true;
+          }
+          if (node.bytes) {
+            _pyHydratedBytes.set(p, node.bytes);
+            return true;
+          }
+          return false;
         },
         write_bytes(path, data) {
+          const p = normPath(path);
           const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-          const r = vfsWriteBinary(path, bytes);
-          if (r.error) throw new Error(r.error);
+          // Stage the write; flushed to blob store after runPythonAsync returns.
+          _pyDirtyWrites.set(p, bytes);
+          // Also stamp a synchronous placeholder in the vfs tree so subsequent
+          // exists/stat/listdir calls inside the same exec see the new file
+          // even though hashing + blob put is deferred until flush.
+          const parts = p.slice(1).split('/'); const fn = parts.pop(); let n = vfs;
+          for (const q of parts) { if (!n.children[q]) n.children[q] = { type: 'dir', children: {} }; n = n.children[q]; }
+          const prior = n.children[fn];
+          if (prior?.type === 'file' && prior.binary && prior.hash) {
+            _pyPendingUnrefs.push(prior.hash);
+          }
+          n.children[fn] = {
+            type: 'file', binary: true, size: bytes.length,
+            content: `[Binary: ${fn}, ${bytes.length} bytes]`,
+            _pyPending: true, modified: Date.now(),
+          };
           return true;
         },
         exists(path) {
@@ -2608,6 +2999,13 @@ workspacefs.stat = lambda path: _js_stat(_norm_workspace_path(path))
 workspacefs.materialize_to_tmp = lambda path, binary=None: _materialize_to_tmp(path, binary)
 workspacefs.persist_tmp_file = lambda tmp_path, dest_path, binary=None: _persist_tmp_file(tmp_path, dest_path, binary)
 workspacefs.Path = WorkspacePath
+
+
+async def _workspacefs_hydrate(path):
+    return bool(await _jsfs.hydrate_bytes(_norm_workspace_path(path)))
+
+
+workspacefs.hydrate = _workspacefs_hydrate
 sys.modules['workspacefs'] = workspacefs
 
 workspace_cli = types.ModuleType('workspace_cli')
@@ -2869,6 +3267,8 @@ pathlib.Path = _orig_path_class
   } catch (e) {
     const detail = `${e.message}`;
     return `PythonExec error: ${detail}. Try JSExec or a different approach.${getPythonNativePathHint(detail)}`;
+  } finally {
+    await _pyFlush();
   }
 }
 
@@ -2885,14 +3285,14 @@ async function toolJSExec(input) {
     },
     vfsRead: (p) => { const r = vfsRead(p); return r.error ? r.error : r.content; },
     vfsWrite: (p, c) => { const r = vfsWrite(p, c); return r.error ? r.error : `Written ${r.bytes} bytes to ${r.path}`; },
-    vfsReadBinary: (p) => {
-      const b = vfsGetBinary(p);
+    vfsReadBinary: async (p) => {
+      const b = await vfsGetBinary(p);
       if (!b) throw new Error(`Binary file not found: ${p}`);
       return new Uint8Array(b);
     },
-    vfsWriteBinary: (p, bytes) => {
+    vfsWriteBinary: async (p, bytes) => {
       const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-      const r = vfsWriteBinary(p, arr);
+      const r = await vfsWriteBinary(p, arr);
       return r.error ? r.error : `Written ${r.bytes} bytes to ${r.path}`;
     },
     vfsStat: (p) => vfsStat(p),
@@ -3075,7 +3475,7 @@ function toggleSkill(id) {
 }
 
 // Mount skill files into VFS at /skills/<name>/
-function mountSkillToVfs(skill, skipRender) {
+async function mountSkillToVfs(skill, skipRender) {
   const base = `/skills/${skill.name}`;
   const batch = true;
   if (skill.body) vfsWrite(`${base}/SKILL.md`, `---\nname: ${skill.name}\ndescription: ${skill.description || ''}\n---\n\n${skill.body}`, batch);
@@ -3083,7 +3483,7 @@ function mountSkillToVfs(skill, skipRender) {
     vfsWrite(`${base}/${rel}`, content, batch);
   }
   for (const [rel, bytesArr] of Object.entries(skill.binaryFiles || {})) {
-    vfsWriteBinary(`${base}/${rel}`, new Uint8Array(bytesArr), batch);
+    await vfsWriteBinary(`${base}/${rel}`, new Uint8Array(bytesArr), batch);
   }
   for (const [name, content] of Object.entries(skill.references || {})) {
     if (!(skill.files || {})[`references/${name}`]) vfsWrite(`${base}/references/${name}`, content, batch);
@@ -4043,6 +4443,22 @@ function _collectBlobRefs(obj, set) {
   for (const v of Object.values(obj)) _collectBlobRefs(v, set);
 }
 
+// Transform a hash-backed vfs tree into the wire format: binary file nodes'
+// {hash,size} fields become {bytes:{$blob,size}} refs. Collects each hash into
+// hashSet so the push step knows what's referenced.
+function _vfsToWireRefs(node, hashSet) {
+  if (node == null || typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(x => _vfsToWireRefs(x, hashSet));
+  if (node.type === 'file' && node.binary && typeof node.hash === 'string') {
+    hashSet.add(node.hash);
+    const { hash, size, bytes, ...rest } = node;
+    return { ...rest, bytes: { $blob: hash, size: size ?? 0 } };
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(node)) out[k] = _vfsToWireRefs(v, hashSet);
+  return out;
+}
+
 // ── Manifest / object / blob transport (encrypted when cfg.passphrase is set) ──
 async function _getManifest(cfg) {
   // Try the preferred key first (based on current passphrase), fall back to the other.
@@ -4096,13 +4512,17 @@ async function _buildLocalState() {
   const convMeta = (await loadConvMetaFromDB()) || [];
   const objects = new Map();
   const blobs = new Map();
+  const _vfsHashRefs = new Set();
 
   const convEntries = [];
   for (const c of convMeta) {
     const d = await loadConvDataFromDB(c.id);
     if (!d) continue;
-    // Extract binary bytes from vfs tree into blob refs; keep chatHTML so switchConversation can restore the rendered view.
-    const vfsRefs = await _extractBlobs(d.vfs, blobs);
+    // Binary file nodes now carry {hash,size}; convert to wire refs and mark
+    // each hash for upload. _extractBlobs is still called afterwards to catch
+    // any legacy Uint8Array leaves from pre-migration records.
+    const vfsWire = _vfsToWireRefs(d.vfs, _vfsHashRefs);
+    const vfsRefs = await _extractBlobs(vfsWire, blobs);
     const convObj = { ...d, vfs: vfsRefs };
     const jsonStr = JSON.stringify(convObj);
     const hash = await _hashString(jsonStr);
@@ -4112,6 +4532,11 @@ async function _buildLocalState() {
       loopCount: c.loopCount, totalTokens: c.totalTokens, contextTokens: c.contextTokens,
       messageCount: c.messageCount, hash
     });
+  }
+  // Register vfs hashes into the blobs Map so the upload step sees them; bytes
+  // stay null and are pulled from blobStore.get() lazily during upload.
+  for (const h of _vfsHashRefs) {
+    if (!blobs.has(h)) blobs.set(h, null);
   }
 
   const skillEntries = [];
@@ -4161,6 +4586,30 @@ async function _buildLocalState() {
 }
 
 // ── Apply a pulled remote state to local storage ──────────────────
+// Transform a wire-format vfs tree back into a hash-backed tree. For each
+// binary file node with a {bytes: {$blob,size}} ref, stashes the bytes into
+// the local blob store (incrementing refcount once per vfs reference) and
+// rewrites the node with top-level {hash,size} fields.
+async function _vfsFromWireRefs(node, blobMap) {
+  if (node == null || typeof node !== 'object') return node;
+  if (Array.isArray(node)) {
+    const out = new Array(node.length);
+    for (let i = 0; i < node.length; i++) out[i] = await _vfsFromWireRefs(node[i], blobMap);
+    return out;
+  }
+  if (node.type === 'file' && node.binary && node.bytes && typeof node.bytes.$blob === 'string') {
+    const hash = node.bytes.$blob;
+    const size = node.bytes.size ?? 0;
+    const bytes = blobMap.get(hash);
+    if (bytes) await blobStore.putWithHash(hash, bytes);
+    const { bytes: _drop, ...rest } = node;
+    return { ...rest, hash, size };
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(node)) out[k] = await _vfsFromWireRefs(v, blobMap);
+  return out;
+}
+
 async function _applyRemoteState(remote, objs, blobMap) {
   // 1. Settings (preserve local LLM / Tavily keys).
   if (remote.settings?.hash) {
@@ -4197,7 +4646,9 @@ async function _applyRemoteState(remote, objs, blobMap) {
   for (const c of (remote.conversations || [])) {
     const obj = objs.get(c.hash);
     if (!obj) continue;
-    const vfsRestored = _inlineBlobs(obj.vfs, blobMap);
+    // Push binary bytes into the local blob store; the saved record keeps only
+    // {hash,size} on binary nodes so IDB rows stay small.
+    const vfsRestored = await _vfsFromWireRefs(obj.vfs, blobMap);
     await saveConvDataToDB(c.id, { ...obj, vfs: vfsRestored });
   }
 
@@ -4305,7 +4756,14 @@ async function pushSnapshotToS3(silent) {
       _setProgress('Uploading blobs', 0, blobsToUpload.length, '');
       let done = 0;
       await _s3Pool(blobsToUpload, async (h) => {
-        const bytes = blobs.get(h);
+        // vfs-referenced hashes are registered with null values; fetch their
+        // bytes lazily from the content-addressed blob store at upload time.
+        let bytes = blobs.get(h);
+        if (!bytes) {
+          bytes = await blobStore.get(h);
+          if (!bytes) { done++; return; }
+          blobs.set(h, bytes);
+        }
         await _putBlob(cfg, h, bytes);
         newBytes += bytes.length;
         done++;
@@ -4696,7 +5154,7 @@ function vfsWrite(path, content, skipRender = false) {
   for (const p of parts) { if (!n.children[p]) n.children[p] = { type: 'dir', children: {} }; n = n.children[p]; if (n.type !== 'dir') return { error: `${p} is not a directory` }; }
   n.children[fn] = { type: 'file', content, modified: Date.now() }; if (!skipRender) renderFileTree(); return { ok: true, path, bytes: content.length };
 }
-function vfsDelete(path) { path = normPath(path); if (path === '/') return { error: 'Cannot delete root' }; const parts = path.slice(1).split('/'); const nm = parts.pop(); let n = vfs; for (const p of parts) { if (!n.children[p]) return { error: `Not found: ${path}` }; n = n.children[p]; } if (!n.children[nm]) return { error: `Not found: ${path}` }; delete n.children[nm]; renderFileTree(); return { ok: true }; }
+function vfsDelete(path) { path = normPath(path); if (path === '/') return { error: 'Cannot delete root' }; const parts = path.slice(1).split('/'); const nm = parts.pop(); let n = vfs; for (const p of parts) { if (!n.children[p]) return { error: `Not found: ${path}` }; n = n.children[p]; } if (!n.children[nm]) return { error: `Not found: ${path}` }; _unrefVfsSubtree(n.children[nm]); delete n.children[nm]; renderFileTree(); return { ok: true }; }
 function vfsMkdir(path) { path = normPath(path); const parts = path.slice(1).split('/'); let n = vfs; for (const p of parts) { if (!n.children[p]) n.children[p] = { type: 'dir', children: {} }; n = n.children[p]; } renderFileTree(); return { ok: true }; }
 function vfsWalk(basePath, cb) {
   basePath = normPath(basePath || '/'); const n = vfsResolve(basePath); if (!n) return;
@@ -4717,7 +5175,7 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'Grep', description: 'Search file contents with regex. Returns matching lines with paths.', input_schema: { type: 'object', properties: { pattern: { type: 'string', description: 'Regex pattern' }, path: { type: 'string', description: 'File or directory' }, include: { type: 'string', description: 'Glob filter for files' } }, required: ['pattern'] } },
   { name: 'Bash', description: 'Execute a simulated bash command against the virtual filesystem. Supports: ls, cat, find, echo, mkdir, rm, pwd, cd, tree, head, tail, wc, cp, mv, touch, grep.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Bash command' } }, required: ['command'] } },
   { name: 'PythonExec', description: 'Execute Python code in an in-browser Pyodide WASM runtime. Use normal shared paths directly (for example /src/main.py, /skills/name/SKILL.md, /outputs/result.txt). Python file access is bridged through workspacefs to the shared browser filesystem — there is no separate project copy to sync later. For text and ordinary path-based APIs, use open(...), pathlib.Path(...), os.path.exists(...), glob.glob(...). For binary files, prefer workspacefs.read_bytes(...) and workspacefs.write_bytes(...). If a library requires a real native temp path, first call workspacefs.materialize_to_tmp(...), then write results back with workspacefs.persist_tmp_file(...). Examples: pathlib.Path("/out.txt").write_text("ok"); data = workspacefs.read_bytes("/in.bin"); workspacefs.write_bytes("/out.bin", data); tmp_in = workspacefs.materialize_to_tmp("/in.pptx", binary=True); workspacefs.persist_tmp_file("/tmp/out.pptx", "/outputs/out.pptx", binary=True).', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Python code to execute. Preferred file strategy: use normal shared paths directly; use workspacefs.read_bytes/write_bytes for binary data; use workspacefs.materialize_to_tmp(...) and workspacefs.persist_tmp_file(...) only when a library requires a native /tmp path. Minimal examples: pathlib.Path("/out.txt").write_text("ok"), workspacefs.write_bytes("/out.bin", workspacefs.read_bytes("/in.bin")), tmp = workspacefs.materialize_to_tmp("/in.pptx", binary=True).' }, packages: { type: 'array', items: { type: 'string' }, description: 'Pure-Python packages to install via micropip' } }, required: ['code'] } },
-  { name: 'JSExec', description: 'Execute JavaScript code in an in-browser sandbox. Has direct access to the virtual filesystem via vfsRead/vfsWrite for text, vfsReadBinary/vfsWriteBinary for binary data, vfsStat for metadata, plus vfsGlob/vfsGrep. Can use fetch() for HTTP requests and console.log for output.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'JavaScript code to execute. Available APIs: vfsRead(path), vfsWrite(path,content), vfsReadBinary(path), vfsWriteBinary(path,bytes), vfsStat(path), vfsGlob(pattern), vfsGrep(pattern,path), fetch().' } }, required: ['code'] } },
+  { name: 'JSExec', description: 'Execute JavaScript code in an in-browser sandbox. Has direct access to the virtual filesystem via vfsRead/vfsWrite for text, async vfsReadBinary/vfsWriteBinary for binary data (use await), vfsStat for metadata, plus vfsGlob/vfsGrep. Can use fetch() for HTTP requests and console.log for output.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'JavaScript code to execute. Wrap top-level awaits by returning an async IIFE or a Promise. Available APIs: vfsRead(path), vfsWrite(path,content), await vfsReadBinary(path), await vfsWriteBinary(path,bytes), vfsStat(path), vfsGlob(pattern), vfsGrep(pattern,path), fetch().' } }, required: ['code'] } },
   { name: 'WebSearch', description: 'Search the web using Tavily AI. Returns titles, URLs, and content snippets for relevant results. Requires a Tavily API key configured in the Web Search panel on the right sidebar.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, search_depth: { type: 'string', enum: ['basic', 'advanced'], description: 'Search depth: basic (fast) or advanced (thorough). Defaults to panel setting.' }, max_results: { type: 'integer', description: 'Maximum results to return (1-10). Defaults to panel setting.' }, include_domains: { type: 'array', items: { type: 'string' }, description: 'Restrict results to these domains (optional).' }, exclude_domains: { type: 'array', items: { type: 'string' }, description: 'Exclude these domains from results (optional).' } }, required: ['query'] } },
   { name: 'Fetch', description: 'Fetch a webpage by URL and return readable page content. Useful for retrieving the contents of a specific web page.', input_schema: { type: 'object', properties: { url: { type: 'string', description: 'HTTP or HTTPS URL to fetch' }, max_chars: { type: 'integer', description: 'Maximum number of characters to return from the cleaned page text. Default 12000.' } }, required: ['url'] } },
   { name: 'TodoWrite', description: 'Maintain a user-visible task list for the current session. Use this proactively on multi-step work so the user can track progress. Each todo has: content (imperative form, e.g. "Run tests"), activeForm (present continuous, e.g. "Running tests"), status (pending | in_progress | completed). Exactly one task should be in_progress at a time. Update the full list on every change; this tool overwrites the prior list.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string', description: 'Imperative description of the task.' }, activeForm: { type: 'string', description: 'Present-continuous description shown while in progress.' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Task status.' } }, required: ['content', 'activeForm', 'status'] } } }, required: ['todos'] } },
@@ -4885,7 +5343,7 @@ async function executeTool(name, input) {
       case 'Edit': return toolEdit(input);
       case 'Glob': return toolGlob(input);
       case 'Grep': return toolGrep(input);
-      case 'Bash': return toolBash(input);
+      case 'Bash': return await toolBash(input);
       case 'PythonExec': return await toolPythonExec(input);
       case 'JSExec': return await toolJSExec(input);
       case 'WebSearch': return await toolWebSearch(input);
@@ -5073,14 +5531,14 @@ async function wsTestSearch() {
   }).join('');
 }
 
-function toolBash(input) {
+async function toolBash(input) {
   const cmd = (input.command || '').trim(); if (!cmd) return '';
-  if (cmd.includes('&&')) { let out = ''; for (const p of cmd.split('&&').map(s => s.trim())) { const r = execBash(p); if (r.startsWith('Error:') || r.startsWith('bash:')) return out ? out + '\n' + r : r; out += (out ? '\n' : '') + r; } return out; }
-  if (cmd.includes(';')) return cmd.split(';').map(s => execBash(s.trim())).filter(Boolean).join('\n');
+  if (cmd.includes('&&')) { let out = ''; for (const p of cmd.split('&&').map(s => s.trim())) { const r = await execBash(p); if (r.startsWith('Error:') || r.startsWith('bash:')) return out ? out + '\n' + r : r; out += (out ? '\n' : '') + r; } return out; }
+  if (cmd.includes(';')) { const pieces = cmd.split(';').map(s => s.trim()); const outs = []; for (const p of pieces) { const r = await execBash(p); if (r) outs.push(r); } return outs.join('\n'); }
   return execBash(cmd);
 }
 
-function execBash(cmd) {
+async function execBash(cmd) {
   if (!cmd) return '';
   const tk = shellTokenize(cmd), nm = tk[0], args = tk.slice(1);
   const statOrError = (p) => {
@@ -5107,7 +5565,7 @@ function execBash(cmd) {
       const es = Object.entries(n.children).sort((a,b) => a[0].localeCompare(b[0]));
       if (!es.length) return '';
       if (ll) return es.map(([nm,c]) => {
-        const size = c.type === 'file' ? (c.binary && c.bytes ? c.bytes.length : (c.content || '').length) : 0;
+        const size = c.type === 'file' ? (c.binary ? (c.size ?? (c.bytes ? c.bytes.length : 0)) : (c.content || '').length) : 0;
         return `${c.type==='dir'?'d':'-'}rw-r--r-- ${String(size).padStart(8)} ${nm}${c.type==='dir'?'/':''}`;
       }).join('\n');
       return es.map(([nm,c]) => nm + (c.type==='dir'?'/':'')).join('  ');
@@ -5148,16 +5606,27 @@ function execBash(cmd) {
     case 'rm': { const ts = args.filter(a => !a.startsWith('-')); return ts.map(t => { const r = vfsDelete(t); return r.error || ''; }).filter(Boolean).join('\n'); }
     case 'cp': {
       if (args.length < 2) return 'cp: missing operand';
-      const st = statOrError(args[0]); if (st.error) return st.error; if (st.type !== 'file') return `Not a file: ${args[0]}`;
-      if (st.binary) { const bytes = vfsGetBinary(args[0]); if (!bytes) return `cp: failed to read binary file: ${args[0]}`; vfsWriteBinary(args[1], bytes); }
-      else { const r = vfsRead(args[0]); if (r.error) return r.error; vfsWrite(args[1], r.content); }
+      const src = vfsResolve(args[0]);
+      if (!src) return `cp: not found: ${args[0]}`;
+      if (src.type !== 'file') return `Not a file: ${args[0]}`;
+      const dstPath = normPath(args[1]);
+      const parts = dstPath.slice(1).split('/'); const fn = parts.pop();
+      let n = vfs;
+      for (const p of parts) { if (!n.children[p]) n.children[p] = { type: 'dir', children: {} }; n = n.children[p]; }
+      await _vfsGraftNode(src, n, fn);
+      renderFileTree();
       return '';
     }
     case 'mv': {
       if (args.length < 2) return 'mv: missing operand';
-      const st = statOrError(args[0]); if (st.error) return st.error; if (st.type !== 'file') return `Not a file: ${args[0]}`;
-      if (st.binary) { const bytes = vfsGetBinary(args[0]); if (!bytes) return `mv: failed to read binary file: ${args[0]}`; vfsWriteBinary(args[1], bytes); }
-      else { const r = vfsRead(args[0]); if (r.error) return r.error; vfsWrite(args[1], r.content); }
+      const src = vfsResolve(args[0]);
+      if (!src) return `mv: not found: ${args[0]}`;
+      if (src.type !== 'file') return `Not a file: ${args[0]}`;
+      const dstPath = normPath(args[1]);
+      const parts = dstPath.slice(1).split('/'); const fn = parts.pop();
+      let n = vfs;
+      for (const p of parts) { if (!n.children[p]) n.children[p] = { type: 'dir', children: {} }; n = n.children[p]; }
+      await _vfsGraftNode(src, n, fn);
       vfsDelete(args[0]);
       return '';
     }
@@ -5270,46 +5739,44 @@ function feRename(path) {
   input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } if (e.key === 'Escape') { input.value = oldName; input.blur(); } };
 }
 
-function feDoRename(oldPath, newName) {
+async function feDoRename(oldPath, newName) {
   const parts = oldPath.split('/');
   parts.pop();
   const newPath = parts.join('/') + '/' + newName;
   const node = vfsResolve(oldPath);
   if (!node) return;
-  if (node.type === 'file') {
-    const r = vfsRead(oldPath);
-    if (!r.error) { vfsWrite(newPath, r.content); vfsDelete(oldPath); }
-    if (node.binary && node.bytes) { vfsWriteBinary(newPath, node.bytes); vfsDelete(oldPath); }
-  } else {
-    // For directories, need to move all children
-    const files = [];
-    vfsWalk(oldPath, (fp, nd) => files.push({ rel: fp.slice(oldPath.length), content: nd.content, binary: nd.binary, bytes: nd.bytes }));
-    vfsDelete(oldPath);
-    for (const f of files) {
-      if (f.binary && f.bytes) vfsWriteBinary(newPath + f.rel, f.bytes);
-      else vfsWrite(newPath + f.rel, f.content);
-    }
-  }
+  // Graft a metadata copy at the new path (bumping blob refcounts for binary
+  // leaves), then delete the original (which unrefs what we just copied).
+  const newParts = newPath.slice(1).split('/'); const newName2 = newParts.pop();
+  let parent = vfs;
+  for (const p of newParts) { if (!parent.children[p]) parent.children[p] = { type: 'dir', children: {} }; parent = parent.children[p]; }
+  await _vfsGraftNode(node, parent, newName2);
+  vfsDelete(oldPath);
   if (currentViewFile && currentViewFile.startsWith(oldPath)) closeFileViewer();
 }
 
-function feDuplicate(path) {
+async function feDuplicate(path) {
   const node = vfsResolve(path);
   if (!node || node.type !== 'file') return;
   const ext = path.lastIndexOf('.');
   const newPath = ext > 0 ? path.slice(0, ext) + '-copy' + path.slice(ext) : path + '-copy';
-  if (node.binary && node.bytes) vfsWriteBinary(newPath, node.bytes);
-  else { const r = vfsRead(path); if (!r.error) vfsWrite(newPath, r.content); }
+  const newParts = newPath.slice(1).split('/'); const newName = newParts.pop();
+  let parent = vfs;
+  for (const p of newParts) { if (!parent.children[p]) parent.children[p] = { type: 'dir', children: {} }; parent = parent.children[p]; }
+  await _vfsGraftNode(node, parent, newName);
+  renderFileTree();
 }
 
-function feDownloadItem(path) {
+async function feDownloadItem(path) {
   const node = vfsResolve(path);
   if (!node) return;
   if (node.type === 'file') {
     const name = path.split('/').pop();
-    if (node.binary && node.bytes) {
+    if (node.binary) {
       const ext = name.split('.').pop().toLowerCase();
-      const blob = new Blob([node.bytes], { type: getMimeType(ext) });
+      const bytes = await vfsGetBinary(path);
+      if (!bytes) return;
+      const blob = new Blob([bytes], { type: getMimeType(ext) });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
     } else downloadBlob(node.content || '', name);
   } else {
@@ -5354,7 +5821,7 @@ function getMimeType(ext) {
   return m[ext] || 'application/octet-stream';
 }
 
-function openFileViewer(path) {
+async function openFileViewer(path) {
   path = normPath(path);
   const node = vfsResolve(path);
   if (!node || node.type !== 'file') return;
@@ -5362,8 +5829,15 @@ function openFileViewer(path) {
   document.getElementById('fvPath').textContent = path;
   const ext = path.split('.').pop().toLowerCase();
   const fvContent = document.getElementById('fvContent');
-  if (node.binary && node.bytes) {
-    const blob = new Blob([node.bytes], { type: getMimeType(ext) });
+  if (node.binary) {
+    const bytes = await vfsGetBinary(path);
+    if (!bytes) {
+      fvContent.innerHTML = `<div style="padding:20px;color:var(--text-dim)">Binary data unavailable.</div>`;
+      document.getElementById('fileViewer').classList.add('show');
+      return;
+    }
+    const size = bytes.length;
+    const blob = new Blob([bytes], { type: getMimeType(ext) });
     const url = URL.createObjectURL(blob);
 
     if (IMAGE_EXTS.has(ext)) {
@@ -5376,20 +5850,20 @@ function openFileViewer(path) {
       fvContent.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:16px"><img src="${url}" style="max-width:100%;max-height:100%"></div>`;
     } else if (OFFICE_EXTS.has(ext)) {
       // Office files: show info + download button. Try Google Docs Viewer for online preview.
-      const size = (node.bytes.length / 1024).toFixed(1);
+      const sizeKB = (size / 1024).toFixed(1);
       fvContent.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:20px">
         <div style="font-size:48px">${{pptx:'\u{1F4CA}',xlsx:'\u{1F4C8}',xls:'\u{1F4C8}',docx:'\u{1F4C4}',doc:'\u{1F4C4}'}[ext] || '\u{1F4C1}'}</div>
         <div style="font-size:14px;font-weight:600">${esc(path.split('/').pop())}</div>
-        <div style="font-size:12px;color:var(--text-secondary)">${size} KB &middot; ${ext.toUpperCase()}</div>
+        <div style="font-size:12px;color:var(--text-secondary)">${sizeKB} KB &middot; ${ext.toUpperCase()}</div>
         <button class="top-btn" onclick="downloadCurrentFile()" style="padding:8px 20px;font-size:13px">\u{2B07} Download to preview</button>
       </div>`;
     } else {
       // Generic binary
-      const size = (node.bytes.length / 1024).toFixed(1);
+      const sizeKB = (size / 1024).toFixed(1);
       fvContent.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px">
         <div style="font-size:48px">\u{1F4C1}</div>
         <div style="font-size:13px">${esc(path.split('/').pop())}</div>
-        <div style="font-size:12px;color:var(--text-secondary)">${size} KB</div>
+        <div style="font-size:12px;color:var(--text-secondary)">${sizeKB} KB</div>
         <button class="top-btn" onclick="downloadCurrentFile()" style="padding:8px 20px">\u{2B07} Download</button>
       </div>`;
     }
@@ -5400,12 +5874,25 @@ function openFileViewer(path) {
     openPreviewModal(path, node.content || '', 'md');
     return;
   } else {
-    // Text file: syntax-highlighted code view
+    // Text file: syntax-highlighted code view.
+    // Guard against massive "text" content (e.g. a binary mis-ingested as text)
+    // — highlighting + per-line DOM construction for megabytes freezes the page.
     const content = node.content || '';
-    let h;
-    try { const lang = hljs.getLanguage(ext) ? ext : 'plaintext'; h = hljs.highlight(content, { language: lang }).value; }
-    catch { h = esc(content); }
-    fvContent.innerHTML = `<div class="fv-code">${h.split('\n').map((l,i) => `<div class="line"><span class="line-num">${i+1}</span><span class="line-content">${l || ' '}</span></div>`).join('')}</div>`;
+    if (content.length > MAX_TEXT_PREVIEW_BYTES) {
+      const name = path.split('/').pop();
+      const sizeKB = (content.length / 1024).toFixed(1);
+      const head = esc(content.slice(0, 4000));
+      fvContent.innerHTML = `<div style="padding:14px;display:flex;flex-direction:column;gap:10px;height:100%;box-sizing:border-box">
+        <div style="font-size:12px;color:var(--text-secondary)">\u26A0 ${esc(name)} is ${sizeKB} KB — preview truncated to first 4 KB to keep the UI responsive. Use Download to get the full file, or Edit to open the raw text.</div>
+        <pre style="flex:1;overflow:auto;background:var(--bg-root);padding:10px;border-radius:4px;white-space:pre-wrap;font-family:'JetBrains Mono',monospace;font-size:12px;margin:0">${head}${content.length > 4000 ? '\n\n\u2026 [truncated]' : ''}</pre>
+        <div style="display:flex;gap:6px"><button class="top-btn" onclick="downloadCurrentFile()">\u{2B07} Download</button><button class="top-btn" onclick="feEditFile(currentViewFile)">Edit raw</button></div>
+      </div>`;
+    } else {
+      let h;
+      try { const lang = hljs.getLanguage(ext) ? ext : 'plaintext'; h = hljs.highlight(content, { language: lang }).value; }
+      catch { h = esc(content); }
+      fvContent.innerHTML = `<div class="fv-code">${h.split('\n').map((l,i) => `<div class="line"><span class="line-num">${i+1}</span><span class="line-content">${l || ' '}</span></div>`).join('')}</div>`;
+    }
   }
   document.getElementById('fileViewer').classList.add('show');
   renderFileTree();
@@ -5538,14 +6025,16 @@ document.addEventListener('keydown', e => {
   }
 });
 
-function downloadCurrentFile() {
+async function downloadCurrentFile() {
   if (!currentViewFile) return;
   const node = vfsResolve(currentViewFile);
   if (!node || node.type !== 'file') return;
   const name = currentViewFile.split('/').pop();
-  if (node.binary && node.bytes) {
+  if (node.binary) {
     const ext = name.split('.').pop().toLowerCase();
-    const blob = new Blob([node.bytes], { type: getMimeType(ext) });
+    const bytes = await vfsGetBinary(currentViewFile);
+    if (!bytes) return;
+    const blob = new Blob([bytes], { type: getMimeType(ext) });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
   } else {
@@ -5619,26 +6108,50 @@ uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag
 uploadZone.addEventListener('drop', async e => {
   e.preventDefault();
   uploadZone.classList.remove('dragover');
-  if (e.dataTransfer.items?.length) {
+  try {
+    // Only use the webkitEntry path when a directory was dropped (it's the
+    // only way to traverse folder contents). For plain file drops, go straight
+    // through dataTransfer.files — entry.file() chokes with EncodingError on
+    // non-ASCII filenames in current Chrome.
     const entries = [];
-    for (const it of e.dataTransfer.items) {
-      const en = it.webkitGetAsEntry && it.webkitGetAsEntry();
-      if (en) entries.push(en);
+    let hasDir = false;
+    if (e.dataTransfer.items?.length) {
+      for (const it of e.dataTransfer.items) {
+        const en = it.webkitGetAsEntry && it.webkitGetAsEntry();
+        if (!en) continue;
+        entries.push(en);
+        if (en.isDirectory) hasDir = true;
+      }
     }
-    if (entries.length) {
-      await importEntries(entries);
-      return;
+    if (hasDir && entries.length) {
+      try {
+        await importEntries(entries);
+        return;
+      } catch (entryErr) {
+        console.warn('[drop] entries path failed, falling back to dataTransfer.files:', entryErr);
+      }
     }
+    if (e.dataTransfer.files?.length) await handleFiles(e.dataTransfer.files);
+  } catch (err) {
+    console.error('Upload failed:', err, err?.stack);
+    if (typeof appendSystemMsg === 'function') appendSystemMsg(`\u26A0 Upload failed: ${err?.name || 'Error'}: ${err?.message || err}`);
   }
-  if (e.dataTransfer.files?.length) await handleFiles(e.dataTransfer.files);
 });
 function isBinaryFile(name) { const ext = name.split('.').pop().toLowerCase(); return BINARY_EXTS.has(ext); }
+// A file should go down the binary path whenever its extension says so OR it's
+// simply too big to reasonably hold as a JS string.
+function shouldTreatAsBinary(file) {
+  return isBinaryFile(file.name) || (file.size && file.size > MAX_TEXT_UPLOAD_BYTES);
+}
 function readFileToVfs(path, file) {
   return new Promise(resolve => {
     const done = result => { resolve(result); };
-    if (isBinaryFile(file.name)) {
+    if (shouldTreatAsBinary(file)) {
       const rd = new FileReader();
-      rd.onload = () => done(vfsWriteBinary(path, new Uint8Array(rd.result), true));
+      rd.onload = async () => {
+        try { done(await vfsWriteBinary(path, new Uint8Array(rd.result), true)); }
+        catch (e) { done({ error: `Failed to write ${path}: ${e.message}` }); }
+      };
       rd.onerror = () => done({ error: `Failed to read ${path}` });
       rd.readAsArrayBuffer(file);
     } else {
@@ -5652,7 +6165,16 @@ function readFileToVfs(path, file) {
 async function readEntryRecursive(entry, basePath = '') {
   if (!entry) return [];
   if (entry.isFile) {
-    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    let file;
+    try { file = await new Promise((resolve, reject) => entry.file(resolve, reject)); }
+    catch (e) {
+      // Chrome's entry.file() rejects with EncodingError for some filenames
+      // (non-ASCII in particular). Skip the entry so sibling files can still
+      // import; the caller may fall back to dataTransfer.files for top-level
+      // drops.
+      console.warn('[readEntryRecursive] skipping', entry.fullPath || entry.name, '-', e?.name || 'error', ':', e?.message || e);
+      return [];
+    }
     return [{ path: '/' + (basePath ? basePath + '/' : '') + entry.name, file }];
   }
   if (!entry.isDirectory) return [];
@@ -5675,7 +6197,13 @@ async function importEntries(entries) {
   }
   for (const item of flattened) {
     if (!item.file) continue;
-    await readFileToVfs(item.path, item.file);
+    try {
+      const r = await readFileToVfs(item.path, item.file);
+      if (r?.error) console.warn('[importEntries] readFileToVfs error for', item.path, '-', r.error);
+    } catch (e) {
+      console.error('[importEntries] throw for', item.path, 'size=', item.file?.size, 'type=', item.file?.type, 'err=', e);
+      throw e;
+    }
   }
   renderFileTree();
 }
@@ -6630,9 +7158,9 @@ function handleInputUpload(ev) {
   const files = ev.target.files;
   for (const f of files) {
     const path = '/' + f.name;
-    if (isBinaryFile(f.name)) {
+    if (shouldTreatAsBinary(f)) {
       const rd = new FileReader();
-      rd.onload = () => { vfsWriteBinary(path, new Uint8Array(rd.result)); attachFile(path); };
+      rd.onload = async () => { await vfsWriteBinary(path, new Uint8Array(rd.result)); attachFile(path); };
       rd.readAsArrayBuffer(f);
     } else {
       const rd = new FileReader();
@@ -6657,7 +7185,7 @@ function getVfsFileList() {
     for (const [nm, ch] of Object.entries(n.children || {})) {
       const fp = p + '/' + nm;
       if (ch.type === 'file') {
-        const size = ch.binary ? (ch.bytes ? ch.bytes.length : 0) : (ch.content ? ch.content.length : 0);
+        const size = ch.binary ? (ch.size ?? (ch.bytes ? ch.bytes.length : 0)) : (ch.content ? ch.content.length : 0);
         files.push({ path: fp, name: nm, size, binary: !!ch.binary });
       }
       else if (ch.type === 'dir') walk(ch, fp);
@@ -6827,9 +7355,9 @@ function feStartDrag(ev, path) {
     if (e.dataTransfer.files?.length) {
       for (const f of e.dataTransfer.files) {
         const path = '/' + f.name;
-        if (isBinaryFile(f.name)) {
+        if (shouldTreatAsBinary(f)) {
           const rd = new FileReader();
-          rd.onload = () => { vfsWriteBinary(path, new Uint8Array(rd.result)); attachFile(path); };
+          rd.onload = async () => { await vfsWriteBinary(path, new Uint8Array(rd.result)); attachFile(path); };
           rd.readAsArrayBuffer(f);
         } else {
           const rd = new FileReader();
@@ -6841,7 +7369,7 @@ function feStartDrag(ev, path) {
   });
 })();
 
-function buildUserMessageContent(text, filePaths, usedSkills) {
+async function buildUserMessageContent(text, filePaths, usedSkills) {
   const content = [];
   const textParts = [];
   if (filePaths.length) {
@@ -6852,15 +7380,18 @@ function buildUserMessageContent(text, filePaths, usedSkills) {
       const ext = fp.split('.').pop().toLowerCase();
       if (node.binary && IMAGE_EXTS.has(ext)) {
         const mediaType = getMimeTypeForPath(fp);
-        const data = mediaType && node.bytes ? bytesToBase64(node.bytes) : '';
+        const bytes = mediaType ? await vfsGetBinary(fp) : null;
+        const data = bytes ? bytesToBase64(bytes) : '';
         if (data) {
           content.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
           fileTextParts.push(`--- ${fp} ---\n[Attached image for visual analysis]`);
           continue;
         }
       }
-      if (node.binary) fileTextParts.push(`--- ${fp} ---\n[Binary file, ${node.bytes ? node.bytes.length : 0} bytes]`);
-      else fileTextParts.push(`--- ${fp} ---\n${node.content || ''}`);
+      if (node.binary) {
+        const size = node.size ?? (node.bytes ? node.bytes.length : 0);
+        fileTextParts.push(`--- ${fp} ---\n[Binary file, ${size} bytes]`);
+      } else fileTextParts.push(`--- ${fp} ---\n${node.content || ''}`);
     }
     if (fileTextParts.length) textParts.push('<attached_files>\n' + fileTextParts.join('\n\n') + '\n</attached_files>');
   }
@@ -6879,7 +7410,7 @@ function buildUserMessageContent(text, filePaths, usedSkills) {
 }
 
 // Send with attached files and /skill
-function handleSend() {
+async function handleSend() {
   const inp = document.getElementById('userInput');
   const t = inp.value.trim();
   if ((!t && !attachedFiles.length) || isGenerating) return;
@@ -6889,10 +7420,10 @@ function handleSend() {
 
   const usedSkills = [...invokedSkills];
   const sentFiles = [...attachedFiles];
-  const msgContent = buildUserMessageContent(t, sentFiles, usedSkills);
   attachedFiles = [];
   invokedSkills = [];
   renderChips();
+  const msgContent = await buildUserMessageContent(t, sentFiles, usedSkills);
   agentLoop(msgContent, t, sentFiles, usedSkills);
 }
 
@@ -6919,13 +7450,13 @@ async function runFsDiagnostics() {
   setStatus('running', 'Running FS diagnostics');
   try {
     vfsWrite(diagPath, text);
-    vfsWriteBinary(binaryPath, bytes);
+    await vfsWriteBinary(binaryPath, bytes);
 
-    const bashLs = execBash(`ls -l / | grep __fs_diag__`);
-    const bashCat = execBash(`cat ${diagPath}`);
-    const bashCatBin = execBash(`cat ${binaryPath}`);
+    const bashLs = await execBash(`ls -l / | grep __fs_diag__`);
+    const bashCat = await execBash(`cat ${diagPath}`);
+    const bashCatBin = await execBash(`cat ${binaryPath}`);
     const jsText = vfsRead(diagPath).content;
-    const jsBin = Array.from(vfsGetBinary(binaryPath) || []);
+    const jsBin = Array.from((await vfsGetBinary(binaryPath)) || []);
     const jsStatText = vfsStat(diagPath);
     const jsStatBin = vfsStat(binaryPath);
     const grepText = vfsGrep('fs-diag-ok', '/', '*');
@@ -6964,7 +7495,7 @@ async function runFsDiagnostics() {
       lines.push('');
       lines.push('[Materialize /tmp]');
       lines.push(`roundtrip stat: ${JSON.stringify(roundtripStat)}`);
-      lines.push(`roundtrip bytes: ${JSON.stringify(Array.from(vfsGetBinary('/__fs_diag_roundtrip.bin') || []))}`);
+      lines.push(`roundtrip bytes: ${JSON.stringify(Array.from((await vfsGetBinary('/__fs_diag_roundtrip.bin')) || []))}`);
     }
 
     appendSystemMsg(lines.join('\n'));
@@ -7094,9 +7625,60 @@ function toggleSection(titleEl) {
   } catch {}
 })();
 
+// ── Legacy migration ──────────────────────────────────────────────
+// Older conversation records stored binary bytes inline as
+// `bytes: Uint8Array` on vfs file nodes. Rewrite them to `{hash,size}` and
+// stash bytes into the blob store. Idempotent: records are stamped with a
+// `_schema: 'v3-hashed'` marker so we don't re-ref blobs on subsequent boots.
+async function _migrateLegacyVfsBytes() {
+  try {
+    const db = await openConvDB();
+    const keys = await new Promise((res, rej) => {
+      const tx = db.transaction(CONV_STORE, 'readonly');
+      const r = tx.objectStore(CONV_STORE).getAllKeys();
+      r.onsuccess = () => res(r.result || []);
+      r.onerror = () => rej(r.error);
+    });
+    let migratedCount = 0;
+    for (const key of keys) {
+      const record = await loadConvDataFromDB(key);
+      if (!record) continue;
+      if (record._schema === 'v3-hashed') continue;
+      const hadBytes = await _migrateVfsTree(record.vfs);
+      record._schema = 'v3-hashed';
+      await saveConvDataToDB(key, record);
+      if (hadBytes) migratedCount++;
+    }
+    if (migratedCount) console.log(`[blob migration] Rewrote ${migratedCount} conversation record(s).`);
+  } catch (e) {
+    console.warn('[blob migration] failed:', e);
+  }
+}
+
+async function _migrateVfsTree(node) {
+  if (!node || typeof node !== 'object') return false;
+  let hadBytes = false;
+  if (node.type === 'file' && node.binary && node.bytes instanceof Uint8Array && !node.hash) {
+    const { hash, size } = await blobStore.put(node.bytes);
+    node.hash = hash;
+    node.size = size;
+    delete node.bytes;
+    if (!node.content) node.content = `[Binary: ${size} bytes]`;
+    hadBytes = true;
+  }
+  if (node.type === 'dir' && node.children) {
+    for (const ch of Object.values(node.children)) {
+      if (await _migrateVfsTree(ch)) hadBytes = true;
+    }
+  }
+  return hadBytes;
+}
+
 // Init
 marked.setOptions({ gfm: true, breaks: true });
 (async function init() {
+  await blobStore.init();
+  await _migrateLegacyVfsBytes();
   await loadSkills();
   rebuildToolDefs();
   await loadConvHistory();
