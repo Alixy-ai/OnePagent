@@ -440,6 +440,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .model-select:focus { border-color: var(--accent-orange); }
 .top-btn { padding: clamp(3px, 0.5vw, 5px) clamp(6px, 1vw, 12px); border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: clamp(10px, 1vw, 11px); cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; white-space: nowrap; flex-shrink: 0; }
 .top-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+.top-btn-icon { display: inline-flex; align-items: center; gap: 4px; }
+.top-btn-icon svg { flex-shrink: 0; }
 
 /* ── Panel Sections ── */
 .panel-section { padding: 12px; border-bottom: 1px solid var(--border); }
@@ -696,7 +698,10 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 
 /* ── Right Panel ── */
 .right-panel { background: var(--bg-panel); display: flex; flex-direction: column; overflow-y: auto; grid-row: 2; grid-column: 5; }
-.tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; max-height: 240px; overflow-y: auto; padding-right: 2px; }
+.tools-grid::-webkit-scrollbar { width: 6px; }
+.tools-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tools-grid::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 .tg-card { padding: 8px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 6px; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
 .tg-card:hover { border-color: var(--accent-pink); transform: translateY(-1px); }
 .tg-card.active { border-color: var(--accent-pink); box-shadow: 0 0 10px rgba(255,51,153,0.12); }
@@ -871,13 +876,27 @@ function toggleTheme() {
   try { localStorage.setItem('ba_theme', next); } catch {}
   var hl = document.getElementById('hljsTheme');
   if (hl) hl.href = 'https://cdn.bootcdn.net/ajax/libs/highlight.js/11.9.0/styles/github' + (next === 'light' ? '' : '-dark') + '.min.css';
+  updateThemeLabel(next);
+}
+function updateThemeLabel(theme) {
+  var label = document.getElementById('themeLabel');
+  if (!label) return;
+  var isLight = theme === 'light';
+  label.setAttribute('data-i18n', isLight ? 'btn.themeLight' : 'btn.themeDark');
+  try { if (typeof t === 'function') label.textContent = t(isLight ? 'btn.themeLight' : 'btn.themeDark'); }
+  catch { label.textContent = isLight ? 'Light' : 'Dark'; }
   var btn = document.getElementById('themeToggleBtn');
-  if (btn) btn.innerHTML = next === 'light' ? '\u2600 Light' : '\u263D Dark';
+  if (btn) {
+    // Keep icon before label; icon is a leading text glyph.
+    // Ensure icon character matches theme.
+    var firstNode = btn.firstChild;
+    var iconChar = isLight ? '\u2600 ' : '\u263D ';
+    if (firstNode && firstNode.nodeType === 3) firstNode.nodeValue = iconChar;
+  }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeToggleBtn');
   var cur = document.documentElement.getAttribute('data-theme') || 'dark';
-  if (btn) btn.innerHTML = cur === 'light' ? '\u2600 Light' : '\u263D Dark';
+  updateThemeLabel(cur);
 });
 </script>
 </head>
@@ -926,28 +945,29 @@ document.addEventListener('DOMContentLoaded', function() {
       <span class="logo-text">OnePagent</span>
     </div>
     <div class="status-dot" id="statusDot"></div>
-    <span class="status-text" id="statusText">Ready</span>
+    <span class="status-text" id="statusText" data-i18n="status.ready">Ready</span>
     <div class="top-right">
       <span class="provider-badge" id="providerBadge"><span id="providerLabel">anthropic</span> / <select id="modelSelect" class="model-select"><option value="">loading...</option></select></span>
       <span class="loop-badge" id="loopBadge">Loop: 0</span>
       <span class="loop-badge" id="tokenBadge">Tokens: 0</span>
-      <button class="top-btn" onclick="newConversation()">+ New</button>
-      <button class="top-btn hide-mobile" onclick="clearConversation()">Clear</button>
-      <button class="top-btn hide-mobile" onclick="runFsDiagnostics()">Diag</button>
-      <button class="top-btn hide-mobile" onclick="downloadAll()">Export</button>
-      <button class="top-btn hide-mobile" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution">&#x1F4CB; Plan</button>
-      <button class="top-btn hide-mobile" id="memBtn" onclick="openMemoryModal()" title="Long-term memory: facts persisted across conversations" style="display:none">&#x1F9E0; Memory</button>
+      <button class="top-btn" onclick="newConversation()"><span data-i18n="btn.new">+ New</span></button>
+      <button class="top-btn hide-mobile" onclick="clearConversation()" data-i18n="btn.clear">Clear</button>
+      <button class="top-btn hide-mobile" onclick="runFsDiagnostics()" data-i18n="btn.diag">Diag</button>
+      <button class="top-btn hide-mobile" onclick="downloadAll()" data-i18n="btn.export">Export</button>
+      <button class="top-btn hide-mobile top-btn-icon" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution" data-i18n-title="btn.planTitle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-4"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg><span data-i18n="btn.plan">Plan</span></button>
+      <button class="top-btn hide-mobile top-btn-icon" id="memBtn" onclick="openMemoryModal()" title="Long-term memory: facts persisted across conversations" data-i18n-title="btn.memoryTitle" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4 4 4 0 0 0-4 4 4 4 0 0 0 2 3.46A4 4 0 0 0 8 22a4 4 0 0 0 4-2 4 4 0 0 0 4 2 4 4 0 0 0 2-8.54A4 4 0 0 0 20 10a4 4 0 0 0-4-4 4 4 0 0 0-4-4Z"/><path d="M12 6v16M8 10h0M16 10h0M9 14h6"/></svg><span data-i18n="btn.memory">Memory</span></button>
       <span style="position:relative;display:inline-block">
-        <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket">&#x2601; Sync</button>
+        <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket" data-i18n-title="btn.syncTitle">&#x2601; <span data-i18n="btn.sync">Sync</span></button>
         <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:240px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
-          <button class="top-btn" id="syncPushBtn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; Push now</button>
-          <button class="top-btn" id="syncPullBtn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; Pull now</button>
+          <button class="top-btn" id="syncPushBtn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; <span data-i18n="btn.syncPush">Push now</span></button>
+          <button class="top-btn" id="syncPullBtn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; <span data-i18n="btn.syncPull">Pull now</span></button>
           <div id="syncProgress" style="display:none;padding:4px 6px;border-top:1px solid var(--border);margin-top:4px"></div>
           <div id="syncStatus" style="font-size:10px;color:var(--text-dim);padding:4px 6px;border-top:1px solid var(--border);margin-top:4px">Not configured.</div>
         </div>
       </span>
-      <button class="top-btn" onclick="openSettingsModal()" title="LLM & Tavily settings">&#x2699; Settings</button>
-      <button class="top-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark theme">&#x263D; Dark</button>
+      <button class="top-btn" onclick="openSettingsModal()" title="LLM & Tavily settings" data-i18n-title="btn.settingsTitle">&#x2699; <span data-i18n="btn.settings">Settings</span></button>
+      <button class="top-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark theme" data-i18n-title="btn.themeTitle">&#x263D; <span id="themeLabel" data-i18n="btn.themeDark">Dark</span></button>
+      <button class="top-btn top-btn-icon" id="langBtn" onclick="toggleLanguage()" title="Switch language / 切换语言" data-i18n-title="btn.langTitle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span data-role="lang-label">EN</span></button>
     </div>
     </div>
     <button class="panel-toggle-btn" id="toggleRight" onclick="togglePanel('right')" title="Toggle right panel">&#x203A;</button>
@@ -957,7 +977,7 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="left-panel">
     <!-- Conversations -->
     <div class="panel-section" data-section="conversations">
-      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F4AC;</span> CONVERSATIONS</span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();newConversation()">&#x2795; New</button><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F4AC;</span> <span data-i18n="section.conversations">CONVERSATIONS</span></span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();newConversation()">&#x2795; <span data-i18n="action.newConv">New</span></button><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div class="conv-list" id="convList"></div>
       </div>
@@ -965,10 +985,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     <!-- Context -->
     <div class="panel-section" data-section="system-prompt">
-      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x1F4C4;</span> SYSTEM PROMPT
+      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x1F4C4;</span> <span data-i18n="section.systemPrompt">SYSTEM PROMPT</span>
         <span class="sp-actions" onclick="event.stopPropagation()">
-          <button class="skill-install-btn" id="spEditBtn" onclick="toggleSysPromptEdit()">&#x270F; Edit</button>
-          <button class="skill-install-btn" id="spResetBtn" onclick="resetSysPrompt()" title="Reset to default">&#x21BA;</button>
+          <button class="skill-install-btn" id="spEditBtn" onclick="toggleSysPromptEdit()">&#x270F; <span data-i18n="action.edit">Edit</span></button>
+          <button class="skill-install-btn" id="spResetBtn" onclick="resetSysPrompt()" title="Reset to default" data-i18n-title="action.resetDefault">&#x21BA;</button>
         </span>
         <span class="section-arrow">&#x25BC;</span>
       </div>
@@ -979,14 +999,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     <!-- Skills -->
     <div class="panel-section" data-section="skills">
-      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x26A1;</span> SKILLS<span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x26A1;</span> <span data-i18n="section.skills">SKILLS</span><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div class="skills-list" id="skillsList"></div>
         <div class="skill-install-bar">
-          <button class="skill-install-btn" onclick="openSkillModal('market')">&#x1F3EA; Market</button>
-          <button class="skill-install-btn" onclick="openSkillModal('file')">&#x1F4C2; .skill/.zip</button>
-          <button class="skill-install-btn" onclick="openSkillModal('github')">&#x1F310; GitHub</button>
-          <button class="skill-install-btn" onclick="openSkillModal('create')">&#x2795; Create</button>
+          <button class="skill-install-btn" onclick="openSkillModal('market')">&#x1F3EA; <span data-i18n="skills.market">Market</span></button>
+          <button class="skill-install-btn" onclick="openSkillModal('file')">&#x1F4C2; <span data-i18n="skills.file">.skill/.zip</span></button>
+          <button class="skill-install-btn" onclick="openSkillModal('github')">&#x1F310; <span data-i18n="skills.github">GitHub</span></button>
+          <button class="skill-install-btn" onclick="openSkillModal('create')">&#x2795; <span data-i18n="skills.create">Create</span></button>
         </div>
       </div>
     </div>
@@ -994,12 +1014,12 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Files -->
     <div class="panel-section" data-section="files" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
       <div class="section-title" onclick="toggleSection(this)">
-        <span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F4C1;</span> FILES</span>
+        <span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F4C1;</span> <span data-i18n="section.files">FILES</span></span>
         <span style="display:flex;gap:2px" onclick="event.stopPropagation()">
-          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feExpandAll()" title="Expand all">&#x25BC;</button>
-          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feCollapseAll()" title="Collapse all">&#x25B6;</button>
-          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feNewFileIn('/')" title="New file">+</button>
-          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feNewFolderIn('/')" title="New folder">&#x1F4C1;</button>
+          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feExpandAll()" title="Expand all" data-i18n-title="action.expandAll">&#x25BC;</button>
+          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feCollapseAll()" title="Collapse all" data-i18n-title="action.collapseAll">&#x25B6;</button>
+          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feNewFileIn('/')" title="New file" data-i18n-title="action.newFile">+</button>
+          <button class="skill-install-btn" style="flex:none;margin:0;padding:1px 6px" onclick="feNewFolderIn('/')" title="New folder" data-i18n-title="action.newFolder">&#x1F4C1;</button>
         </span>
         <span class="section-arrow">&#x25BC;</span>
       </div>
@@ -1007,8 +1027,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="fe-tree" id="fileTree" style="flex:1"></div>
         <div class="fe-upload-zone" id="uploadZone">
           <input type="file" id="fileInput" multiple onchange="handleUpload(event)">
-          <span class="fe-upload-label">Drop files or click to upload</span>
-          <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()">Folder</button>
+          <span class="fe-upload-label" data-i18n="upload.drop">Drop files or click to upload</span>
+          <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()" data-i18n="upload.folder">Folder</button>
         </div>
         <input type="file" id="folderInput" webkitdirectory directory multiple onchange="handleFolderUpload(event)" style="display:none">
       </div>
@@ -1022,17 +1042,17 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="center-panel">
     <div class="chat-header">
       <div class="agent-icon">&#x2726;</div>
-      <div class="agent-label">Agent &mdash; Reasoning Loop</div>
+      <div class="agent-label" data-i18n="agent.label">Agent &mdash; Reasoning Loop</div>
     </div>
     <div class="chat-messages" id="chatMessages">
-      <div class="msg msg-system"><div class="msg-body">Agent initialized. Upload files and type a task to begin.</div></div>
+      <div class="msg msg-system"><div class="msg-body" data-i18n="agent.init">Agent initialized. Upload files and type a task to begin.</div></div>
     </div>
     <div class="chat-input-wrap" style="position:relative">
       <div class="input-chips" id="inputChips"></div>
       <div class="at-dropdown" id="atDropdown"></div>
       <div class="chat-input-area" id="chatInputArea">
-        <button class="attach-btn" title="Attach files"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg><input type="file" multiple onchange="handleInputUpload(event)"></button>
-        <textarea id="userInput" placeholder="Type message..." rows="1" onkeydown="handleInputKey(event)" oninput="handleInputChange(this)"></textarea>
+        <button class="attach-btn" title="Attach files" data-i18n-title="input.attach"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg><input type="file" multiple onchange="handleInputUpload(event)"></button>
+        <textarea id="userInput" placeholder="Type message..." rows="1" onkeydown="handleInputKey(event)" oninput="handleInputChange(this)" data-i18n-placeholder="input.placeholder"></textarea>
         <button class="send-btn" id="sendBtn" onclick="handleSend()">&#x25B6;</button>
       </div>
     </div>
@@ -1045,7 +1065,7 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="right-panel">
     <!-- Tools -->
     <div class="panel-section" data-section="tools">
-      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F527;</span> TOOLS</span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openMcpToolModal()">&#x2795; MCP</button><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F527;</span> <span data-i18n="section.tools">TOOLS</span></span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openMcpToolModal()" data-i18n="action.addMcp">+ MCP</button><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div class="tools-grid" id="toolsGrid"></div>
       </div>
@@ -1053,8 +1073,8 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Web Search -->
     <div class="panel-section" data-section="web-search">
       <div class="section-title" onclick="toggleSection(this)">
-        <span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F310;</span> WEB SEARCH</span>
-        <span class="ws-status" id="wsStatus" onclick="event.stopPropagation()">no key</span>
+        <span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x1F310;</span> <span data-i18n="section.webSearch">WEB SEARCH</span></span>
+        <span class="ws-status" id="wsStatus" onclick="event.stopPropagation()" data-i18n="ws.noKey">no key</span>
         <span class="section-arrow">&#x25BC;</span>
       </div>
       <div class="section-body">
@@ -1069,7 +1089,7 @@ document.addEventListener('DOMContentLoaded', function() {
               <option value="5" selected>5</option>
               <option value="10">10</option>
             </select>
-            <input class="ws-input" id="wsQuery" placeholder="Test query...">
+            <input class="ws-input" id="wsQuery" placeholder="Test query..." data-i18n-placeholder="ws.testQuery">
             <button class="ws-btn" onclick="wsTestSearch()" title="Run test search">&#x25BA;</button>
           </div>
           <div class="ws-results" id="wsResults"></div>
@@ -1078,29 +1098,29 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
     <!-- Todos -->
     <div class="panel-section" data-section="todos">
-      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x2705;</span> TODOS</span><span id="todoCounts" style="flex:none;font-size:10px;color:var(--text-dim);margin-right:6px"></span><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x2705;</span> <span data-i18n="section.todos">TODOS</span></span><span id="todoCounts" style="flex:none;font-size:10px;color:var(--text-dim);margin-right:6px"></span><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div id="todosArea"></div>
       </div>
     </div>
     <!-- Hooks -->
     <div class="panel-section" data-section="hooks">
-      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x26A1;</span> HOOKS</span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openHookModal()">&#x2795; Add</button><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon">&#x26A1;</span> <span data-i18n="section.hooks">HOOKS</span></span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openHookModal()" data-i18n="action.addHook">+ Add</button><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div id="hooksArea"></div>
       </div>
     </div>
     <!-- Memory -->
     <div class="panel-section" data-section="memory" style="flex:1">
-      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x1F4BE;</span> MEMORY<span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span class="icon">&#x1F4BE;</span> <span data-i18n="section.memory">MEMORY</span><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div class="memory-stats">
-          <div class="mem-stat"><div class="val" id="memMsgCount">0</div><div class="lbl">Messages</div></div>
-          <div class="mem-stat"><div class="val" id="memTokenCount">0</div><div class="lbl">Tokens</div></div>
+          <div class="mem-stat"><div class="val" id="memMsgCount">0</div><div class="lbl" data-i18n="mem.messages">Messages</div></div>
+          <div class="mem-stat"><div class="val" id="memTokenCount">0</div><div class="lbl" data-i18n="mem.tokens">Tokens</div></div>
         </div>
         <div class="memory-bar"><div class="fill" id="memoryFill" style="width:0%"></div></div>
         <div class="memory-log" id="memoryLog"></div>
-        <button class="compact-btn" onclick="compactMemory()">&#x1F5DC; Auto-Compact Memory</button>
+        <button class="compact-btn" onclick="compactMemory()">&#x1F5DC; <span data-i18n="mem.autoCompact">Auto-Compact Memory</span></button>
       </div>
     </div>
   </div>
@@ -1449,6 +1469,203 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════════════
+// I18N — lightweight language system (EN / ZH)
+// ═══════════════════════════════════════════════════════════════════
+const I18N_KEY = 'ba_lang';
+const I18N = {
+  en: {
+    // Top bar
+    'status.ready': 'Ready',
+    'status.thinking': 'Thinking...',
+    'status.streaming': 'Streaming...',
+    'status.processing': 'Processing results...',
+    'thinking': 'thinking',
+    'streaming': 'Streaming...',
+    'btn.new': '+ New',
+    'btn.clear': 'Clear',
+    'btn.diag': 'Diag',
+    'btn.export': 'Export',
+    'btn.plan': 'Plan',
+    'btn.planTitle': 'Plan Mode: block writes, require approval before execution',
+    'btn.memory': 'Memory',
+    'btn.memoryTitle': 'Long-term memory: facts persisted across conversations',
+    'btn.sync': 'Sync',
+    'btn.syncTitle': 'Cloud sync to S3-compatible bucket',
+    'btn.syncPush': 'Push now',
+    'btn.syncPull': 'Pull now',
+    'btn.settings': 'Settings',
+    'btn.settingsTitle': 'LLM & Tavily settings',
+    'btn.themeDark': 'Dark',
+    'btn.themeLight': 'Light',
+    'btn.themeTitle': 'Toggle light/dark theme',
+    'btn.lang': 'EN',
+    'btn.langTitle': 'Switch language / 切换语言',
+    'badge.loop': 'Loop',
+    'badge.tokens': 'Tokens',
+    // Agent header
+    'agent.label': 'Agent \u2014 Reasoning Loop',
+    'agent.init': 'Agent initialized. Upload files and type a task to begin.',
+    // Section titles (left + right panels)
+    'section.conversations': 'CONVERSATIONS',
+    'section.systemPrompt': 'SYSTEM PROMPT',
+    'section.skills': 'SKILLS',
+    'section.files': 'FILES',
+    'section.tools': 'TOOLS',
+    'section.webSearch': 'WEB SEARCH',
+    'section.todos': 'TODOS',
+    'section.hooks': 'HOOKS',
+    'section.memory': 'MEMORY',
+    // Common actions
+    'action.newConv': '+ New',
+    'action.edit': 'Edit',
+    'action.resetDefault': 'Reset to default',
+    'action.expandAll': 'Expand all',
+    'action.collapseAll': 'Collapse all',
+    'action.newFile': 'New file',
+    'action.newFolder': 'New folder',
+    'action.addMcp': '+ MCP',
+    'action.addHook': '+ Add',
+    // File upload
+    'upload.drop': 'Drop files or click to upload',
+    'upload.folder': 'Folder',
+    // Skills
+    'skills.market': 'Market',
+    'skills.file': '.skill/.zip',
+    'skills.github': 'GitHub',
+    'skills.create': 'Create',
+    // Input
+    'input.placeholder': 'Type message...',
+    'input.attach': 'Attach files',
+    // Memory panel
+    'mem.messages': 'Messages',
+    'mem.tokens': 'Tokens',
+    'mem.autoCompact': 'Auto-Compact Memory',
+    // Status mini-badges
+    'ws.noKey': 'no key',
+    'ws.testQuery': 'Test query...',
+  },
+  zh: {
+    // Top bar
+    'status.ready': '就绪',
+    'status.thinking': '思考中…',
+    'status.streaming': '流式输出…',
+    'status.processing': '处理结果中…',
+    'thinking': '思考中',
+    'streaming': '流式输出…',
+    'btn.new': '+ 新建',
+    'btn.clear': '清空',
+    'btn.diag': '诊断',
+    'btn.export': '导出',
+    'btn.plan': '计划',
+    'btn.planTitle': '计划模式：禁止写入，执行前需审批',
+    'btn.memory': '记忆',
+    'btn.memoryTitle': '长期记忆：跨对话持久保留事实',
+    'btn.sync': '同步',
+    'btn.syncTitle': '同步至 S3 兼容存储',
+    'btn.syncPush': '立即上传',
+    'btn.syncPull': '立即下载',
+    'btn.settings': '设置',
+    'btn.settingsTitle': 'LLM 与 Tavily 设置',
+    'btn.themeDark': '深色',
+    'btn.themeLight': '浅色',
+    'btn.themeTitle': '切换明暗主题',
+    'btn.lang': '中',
+    'btn.langTitle': '切换语言 / Switch language',
+    'badge.loop': '轮次',
+    'badge.tokens': '令牌',
+    // Agent header
+    'agent.label': 'Agent \u2014 推理循环',
+    'agent.init': 'Agent 已初始化。上传文件并输入任务开始。',
+    // Section titles
+    'section.conversations': '对话',
+    'section.systemPrompt': '系统提示词',
+    'section.skills': '技能',
+    'section.files': '文件',
+    'section.tools': '工具',
+    'section.webSearch': '网页搜索',
+    'section.todos': '待办',
+    'section.hooks': '钩子',
+    'section.memory': '内存',
+    // Common actions
+    'action.newConv': '+ 新建',
+    'action.edit': '编辑',
+    'action.resetDefault': '恢复默认',
+    'action.expandAll': '全部展开',
+    'action.collapseAll': '全部折叠',
+    'action.newFile': '新建文件',
+    'action.newFolder': '新建文件夹',
+    'action.addMcp': '+ MCP',
+    'action.addHook': '+ 添加',
+    // File upload
+    'upload.drop': '拖入文件或点击上传',
+    'upload.folder': '文件夹',
+    // Skills
+    'skills.market': '市场',
+    'skills.file': '.skill/.zip',
+    'skills.github': 'GitHub',
+    'skills.create': '创建',
+    // Input
+    'input.placeholder': '输入消息…',
+    'input.attach': '附加文件',
+    // Memory panel
+    'mem.messages': '消息',
+    'mem.tokens': '令牌',
+    'mem.autoCompact': '自动压缩内存',
+    // Status mini-badges
+    'ws.noKey': '无密钥',
+    'ws.testQuery': '测试查询…',
+  }
+};
+let CURRENT_LANG = (function() {
+  try { const s = localStorage.getItem(I18N_KEY); if (s === 'zh' || s === 'en') return s; } catch {}
+  const nav = (navigator.language || '').toLowerCase();
+  return nav.startsWith('zh') ? 'zh' : 'en';
+})();
+function t(key, fallback) {
+  const dict = I18N[CURRENT_LANG] || I18N.en;
+  if (dict[key] != null) return dict[key];
+  if (I18N.en[key] != null) return I18N.en[key];
+  return fallback != null ? fallback : key;
+}
+function applyI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (!key) return;
+    el.textContent = t(key, el.textContent);
+  });
+  scope.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    if (!key) return;
+    el.setAttribute('title', t(key, el.getAttribute('title') || ''));
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    if (!key) return;
+    el.setAttribute('placeholder', t(key, el.getAttribute('placeholder') || ''));
+  });
+  document.documentElement.setAttribute('lang', CURRENT_LANG === 'zh' ? 'zh-CN' : 'en');
+}
+function setLanguage(lang) {
+  if (lang !== 'en' && lang !== 'zh') return;
+  CURRENT_LANG = lang;
+  try { localStorage.setItem(I18N_KEY, lang); } catch {}
+  applyI18n();
+  // Refresh dynamic UI pieces
+  try { if (typeof updateLangButton === 'function') updateLangButton(); } catch {}
+  try { if (typeof setStatus === 'function' && !isGenerating) setStatus('ready', t('status.ready')); } catch {}
+  try { if (typeof updateMemoryUI === 'function') updateMemoryUI(); } catch {}
+}
+function toggleLanguage() { setLanguage(CURRENT_LANG === 'zh' ? 'en' : 'zh'); }
+function updateLangButton() {
+  const btn = document.getElementById('langBtn');
+  if (!btn) return;
+  const label = btn.querySelector('[data-role="lang-label"]');
+  if (label) label.textContent = CURRENT_LANG === 'zh' ? '中' : 'EN';
+  btn.setAttribute('title', t('btn.langTitle'));
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════
@@ -7141,8 +7358,8 @@ function updateMemoryUI() {
   document.getElementById('memMsgCount').textContent = mc;
   document.getElementById('memTokenCount').textContent = formatTokenCount(currentContext);
   document.getElementById('memoryFill').style.width = pct + '%';
-  document.getElementById('loopBadge').textContent = `Loop: ${loopCount}`;
-  document.getElementById('tokenBadge').textContent = `Tokens: ${formatTokenCount(totalTokens)}`;
+  document.getElementById('loopBadge').textContent = `${t('badge.loop')}: ${loopCount}`;
+  document.getElementById('tokenBadge').textContent = `${t('badge.tokens')}: ${formatTokenCount(totalTokens)}`;
 }
 
 function logMemEntry(type, text) {
@@ -7535,7 +7752,7 @@ function isNearBottom(el, threshold = 24) {
 }
 
 async function _runAgentLoop(userText, options = {}) {
-  isGenerating = true; updateButtons(); setStatus('running', 'Thinking...');
+  isGenerating = true; updateButtons(); setStatus('running', t('status.thinking'));
   rebuildConversation();
   const promptEntryId = options.promptEntryId || activeEntryId;
   const promptIndex = Number.isInteger(options.promptIndex) ? options.promptIndex : findConversationIndexByEntryId(promptEntryId);
@@ -7551,16 +7768,24 @@ async function _runAgentLoop(userText, options = {}) {
       if (PROVIDER !== 'anthropic') {
         body.stream_options = { ...(body.stream_options || {}), include_usage: true };
       }
-      const resp = await fetch(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: abortCtrl.signal });
-      if (!resp.ok) { appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
-      const reader = resp.body.getReader();
+      // Show pending "thinking" bubble BEFORE fetch so users see immediate feedback.
       const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
+      textEl.dataset.pending = '1';
+      textEl.innerHTML = `<div class="thinking" aria-label="${t('thinking')}"><span></span><span></span><span></span></div>`;
       msgEl.dataset.userText = userText;
       msgEl.dataset.promptIndex = String(promptIndex);
       msgEl.dataset.promptEntryId = promptEntryId || '';
       msgEl.dataset.tokenBase = String(tokenBase);
       msgEl.dataset.loopBase = String(loopBase);
-      setStatus('running', 'Streaming...');
+      let resp;
+      try { resp = await fetch(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: abortCtrl.signal }); }
+      catch (e) { msgEl.remove(); throw e; }
+      if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
+      const reader = resp.body.getReader();
+      // Replace thinking dots with streaming cursor now that response is flowing.
+      delete textEl.dataset.pending;
+      textEl.innerHTML = '<span class="streaming-cursor"></span>';
+      setStatus('running', t('status.streaming'));
       let fullText = '';
       const onText = chunk => { fullText += chunk; renderMdThrottled(textEl, fullText); scrollBottom(); };
       const onReasoning = chunk => { appendReasoningChunk(reasoningEl, chunk); scrollBottom(); };
@@ -7676,13 +7901,13 @@ async function _runAgentLoop(userText, options = {}) {
         }
         appendSessionEntry('tool_result', { content: trs, promptEntryId });
         rebuildConversation();
-        setStatus('running', 'Processing results...');
+        setStatus('running', t('status.processing'));
         scrollBottom();
       }
       if (result.stop_reason !== 'tool_use') break;
     }
   } catch (e) { if (e.name !== 'AbortError') appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
-  isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', 'Ready'); updateMemoryUI(); saveCurrentConv(true);
+  isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', t('status.ready')); updateMemoryUI(); saveCurrentConv(true);
   try { await runHooks('on_stop', { loopCount, totalTokens, stoppedBy: abortCtrl === null ? 'done' : 'abort' }); } catch {}
 }
 
@@ -8557,6 +8782,8 @@ async function _migrateVfsTree(node) {
 // Init
 marked.setOptions({ gfm: true, breaks: true });
 (async function init() {
+  applyI18n();
+  updateLangButton();
   await blobStore.init();
   await _migrateLegacyVfsBytes();
   await loadSkills();
