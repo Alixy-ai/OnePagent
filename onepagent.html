@@ -936,6 +936,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <button class="top-btn hide-mobile" onclick="runFsDiagnostics()">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()">Export</button>
       <button class="top-btn hide-mobile" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution">&#x1F4CB; Plan</button>
+      <button class="top-btn hide-mobile" id="memBtn" onclick="openMemoryModal()" title="Long-term memory: facts persisted across conversations" style="display:none">&#x1F9E0; Memory</button>
       <span style="position:relative;display:inline-block">
         <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket">&#x2601; Sync</button>
         <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:240px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
@@ -1254,6 +1255,16 @@ document.addEventListener('DOMContentLoaded', function() {
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x1F9E0; Long-term Memory <span style="text-transform:none;color:var(--text-dim);font-weight:400">(persists facts across conversations)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemEnabled" style="width:auto;margin:0"> Enable long-term memory (default off)</label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemAutoExtract" style="width:auto;margin:0" checked> Auto-extract facts after each assistant turn (adds one lightweight LLM call)</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Top-N memories to recall</label>
+        <input type="number" id="setMemMaxRecall" min="0" max="40" placeholder="8" style="width:80px;margin-bottom:0">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px">Memory = Information + Time Label + Searchable Relationships. Records live in IndexedDB (<code>ba_memories</code>) and sync via the cloud-sync layer below when configured.</div>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x2601; Cloud Sync <span style="text-transform:none;color:var(--text-dim);font-weight:400">(S3-compatible \u2014 AWS, R2, MinIO, B2)</span></label>
       <label>Endpoint <span style="text-transform:none;color:var(--text-dim)">(e.g. https://s3.us-east-1.amazonaws.com)</span></label>
       <input type="text" id="setS3Endpoint" placeholder="https://s3.us-east-1.amazonaws.com">
@@ -1353,6 +1364,63 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
         Hooks run with the same power as JSExec. They can read and modify agent state. Errors in a hook are swallowed and logged &mdash; they never break the agent loop.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Memory Viewer Modal -->
+<div class="modal-overlay" id="memoryModal">
+  <div class="modal" style="width:clamp(320px,96vw,860px)">
+    <div class="modal-header">
+      <h3>&#x1F9E0; Long-term Memory <span style="font-size:10px;color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px">Information + Time + Relationships</span></h3>
+      <button class="modal-close" onclick="closeMemoryModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <input type="text" id="memSearchInput" placeholder="Search content, tags, type\u2026" oninput="renderMemoryList()" style="flex:1;min-width:160px;margin-bottom:0">
+        <select id="memFilterType" onchange="renderMemoryList()" style="padding:6px 8px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px">
+          <option value="">all types</option>
+          <option value="fact">fact</option>
+          <option value="preference">preference</option>
+          <option value="event">event</option>
+          <option value="skill">skill</option>
+          <option value="note">note</option>
+        </select>
+        <select id="memFilterSource" onchange="renderMemoryList()" style="padding:6px 8px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px">
+          <option value="">any source</option>
+          <option value="auto">auto</option>
+          <option value="tool">tool</option>
+          <option value="manual">manual</option>
+        </select>
+      </div>
+      <div id="memTagChips" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
+      <div id="memStats" style="font-size:10px;color:var(--text-dim);margin-bottom:6px"></div>
+      <div id="memList" style="max-height:55vh;overflow-y:auto;padding-right:4px"></div>
+
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+        <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">Add memory manually</label>
+        <textarea id="memAddContent" placeholder="e.g. User prefers pytest over unittest for new Python projects." style="min-height:60px"></textarea>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="memAddTags" placeholder="tags: python, testing" style="flex:1;min-width:160px;margin-bottom:0">
+          <select id="memAddType" style="padding:6px 8px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px">
+            <option value="fact">fact</option>
+            <option value="preference">preference</option>
+            <option value="event">event</option>
+            <option value="skill">skill</option>
+            <option value="note">note</option>
+          </select>
+          <button type="button" class="modal-btn primary" onclick="memAddFromUI()" style="padding:6px 14px;font-size:11px">&#x2795; Add</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button type="button" class="modal-btn secondary" onclick="memExport()" style="flex:1;padding:6px 10px;font-size:11px">&#x2B07; Export JSON</button>
+        <button type="button" class="modal-btn secondary" onclick="memImport()" style="flex:1;padding:6px 10px;font-size:11px">&#x2B06; Import JSON</button>
+        <button type="button" class="modal-btn secondary" onclick="memClearAll()" style="flex:1;padding:6px 10px;font-size:11px;color:#ff6b6b">&#x1F5D1; Clear all</button>
+        <button type="button" class="modal-btn secondary" onclick="closeMemoryModal()" style="flex:1;padding:6px 10px;font-size:11px">Close</button>
+      </div>
+      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
+        Memories carry a time label and tags. They are injected into the system prompt at the start of each turn ranked by recency, tag overlap, and keyword match. Pinned memories are never auto-pruned.
       </div>
     </div>
   </div>
@@ -4030,6 +4098,10 @@ function openSettingsModal() {
   document.getElementById('setModelContexts').value = Object.entries(ctxs).map(([k, v]) => `${k}=${v}`).join('\n');
   document.getElementById('setTavilyKey').value = s.tavily_api_key || (_keys && _keys.tavily_api_key) || '';
   document.getElementById('setStatus').textContent = '';
+  const mem = { ...MEM_DEFAULTS, ...(s.memory || {}) };
+  document.getElementById('setMemEnabled').checked = !!mem.enabled;
+  document.getElementById('setMemAutoExtract').checked = !!mem.autoExtract;
+  document.getElementById('setMemMaxRecall').value = String(Math.max(0, mem.maxRecall | 0) || MEM_DEFAULTS.maxRecall);
   const s3 = _loadS3Cfg() || {};
   document.getElementById('setS3Endpoint').value = s3.endpoint || '';
   document.getElementById('setS3Region').value = s3.region || 'us-east-1';
@@ -4117,6 +4189,11 @@ async function saveSettings() {
   const defaultModel = document.getElementById('setDefaultModel').value.trim();
   const modelContexts = parseModelContexts(document.getElementById('setModelContexts').value);
   const tavilyKey = document.getElementById('setTavilyKey').value.trim();
+  const memEnabled = document.getElementById('setMemEnabled').checked;
+  const memAutoExtract = document.getElementById('setMemAutoExtract').checked;
+  const memMaxRecallRaw = parseInt(document.getElementById('setMemMaxRecall').value, 10);
+  const memMaxRecall = Number.isFinite(memMaxRecallRaw) && memMaxRecallRaw >= 0 ? Math.min(40, memMaxRecallRaw) : MEM_DEFAULTS.maxRecall;
+  const prevMem = loadSettings()?.memory || {};
   const settings = {
     api_provider: provider,
     api_endpoint: endpoint,
@@ -4124,9 +4201,13 @@ async function saveSettings() {
     api_models: models,
     api_model: defaultModel || models[0] || '',
     model_contexts: modelContexts,
-    tavily_api_key: tavilyKey
+    tavily_api_key: tavilyKey,
+    memory: { enabled: memEnabled, autoExtract: memAutoExtract, maxRecall: memMaxRecall, extractionModel: prevMem.extractionModel || '' }
   };
   saveSettingsToStorage(settings);
+  if (memEnabled && !prevMem.enabled) { openMemDB().catch(e => console.warn('Memory DB open failed', e)); memLoadCache().catch(() => {}); }
+  renderMemoryButton();
+  rebuildToolDefs();
   PROVIDER = provider;
   document.getElementById('providerLabel').textContent = PROVIDER;
   _keys = Object.assign(_keys || {}, {
@@ -4573,6 +4654,18 @@ async function _buildLocalState() {
   const settingsHash = await _hashString(settingsJson);
   objects.set(settingsHash, settingsJson);
 
+  // Long-term memory: one content-hashed JSON blob with all records.
+  let memoriesEntry = null;
+  try {
+    const allMems = await memListAll();
+    if (allMems && allMems.length) {
+      const memsJson = JSON.stringify({ memories: allMems });
+      const memsHash = await _hashString(memsJson);
+      objects.set(memsHash, memsJson);
+      memoriesEntry = { hash: memsHash, count: allMems.length };
+    }
+  } catch (e) { console.warn('memory sync build failed', e); }
+
   const manifest = {
     version: 2,
     updatedAt: Date.now(),
@@ -4580,6 +4673,7 @@ async function _buildLocalState() {
     conversations: convEntries,
     skills: skillEntries,
     settings: { hash: settingsHash },
+    memories: memoriesEntry,
     blobs: [...blobs.keys()].sort()
   };
   return { manifest, objects, blobs };
@@ -4668,6 +4762,38 @@ async function _applyRemoteState(remote, objs, blobMap) {
   }
   try { localStorage.setItem('ba_skills', JSON.stringify(skillsMeta)); } catch {}
 
+  // 3b. Long-term memory — merge on id, prefer higher updatedAt.
+  if (remote.memories?.hash) {
+    const memObj = objs.get(remote.memories.hash);
+    const incoming = Array.isArray(memObj?.memories) ? memObj.memories : [];
+    if (incoming.length) {
+      try {
+        const current = await memListAll();
+        const byId = new Map(current.map(m => [m.id, m]));
+        for (const m of incoming) {
+          if (!m || !m.id || typeof m.content !== 'string') continue;
+          const existing = byId.get(m.id);
+          if (!existing || (m.updatedAt || 0) > (existing.updatedAt || 0)) {
+            await memPutRaw({
+              id: m.id,
+              content: m.content,
+              type: m.type || 'fact',
+              tags: Array.isArray(m.tags) ? m.tags : [],
+              createdAt: Number.isFinite(m.createdAt) ? m.createdAt : Date.now(),
+              updatedAt: Number.isFinite(m.updatedAt) ? m.updatedAt : Date.now(),
+              lastRecalledAt: m.lastRecalledAt || null,
+              recallCount: m.recallCount || 0,
+              pinned: !!m.pinned,
+              convId: m.convId || null,
+              sourceTurn: m.sourceTurn ?? null,
+              source: m.source || 'manual'
+            });
+          }
+        }
+      } catch (e) { console.warn('memory sync apply failed', e); }
+    }
+  }
+
   // 4. Reload in-memory UI state from the freshly-written stores.
   skills = [];
   await loadSkills();
@@ -4745,6 +4871,7 @@ async function pushSnapshotToS3(silent) {
       for (const c of remote.conversations || []) remoteObjHashes.add(c.hash);
       for (const s of remote.skills || []) remoteObjHashes.add(s.hash);
       if (remote.settings?.hash) remoteObjHashes.add(remote.settings.hash);
+      if (remote.memories?.hash) remoteObjHashes.add(remote.memories.hash);
       for (const h of remote.blobs || []) remoteBlobHashes.add(h);
     }
 
@@ -4854,12 +4981,14 @@ async function pullSnapshotFromS3() {
     for (const c of remote.conversations || []) if (!local.objects.has(c.hash)) neededObjHashes.push(c.hash);
     for (const s of remote.skills || []) if (!local.objects.has(s.hash)) neededObjHashes.push(s.hash);
     if (remote.settings?.hash && !local.objects.has(remote.settings.hash)) neededObjHashes.push(remote.settings.hash);
+    if (remote.memories?.hash && !local.objects.has(remote.memories.hash)) neededObjHashes.push(remote.memories.hash);
 
     const objs = new Map();
     // Reuse local copies for hashes we already have.
     for (const c of remote.conversations || []) if (local.objects.has(c.hash)) objs.set(c.hash, JSON.parse(local.objects.get(c.hash)));
     for (const s of remote.skills || []) if (local.objects.has(s.hash)) objs.set(s.hash, JSON.parse(local.objects.get(s.hash)));
     if (remote.settings?.hash && local.objects.has(remote.settings.hash)) objs.set(remote.settings.hash, JSON.parse(local.objects.get(remote.settings.hash)));
+    if (remote.memories?.hash && local.objects.has(remote.memories.hash)) objs.set(remote.memories.hash, JSON.parse(local.objects.get(remote.memories.hash)));
 
     if (neededObjHashes.length) {
       _setProgress('Downloading objects', 0, neededObjHashes.length, '');
@@ -5165,6 +5294,560 @@ function vfsGlob(pat, base) { base = normPath(base || '/'); const r = []; vfsWal
 function vfsGrep(pat, base, inc) { base = normPath(base || '/'); const re = new RegExp(pat, 'i'); const r = []; vfsWalk(base, (fp, nd) => { if (nd.binary) return; if (inc) { const nm = fp.split('/').pop(); if (!globMatch(inc, nm) && !globMatch(inc, fp)) return; } const lines = nd.content.split('\n'); for (let i = 0; i < lines.length && r.length < 200; i++) if (re.test(lines[i])) r.push(`${fp}:${i+1}:${lines[i]}`); }); return r; }
 
 // ═══════════════════════════════════════════════════════════════════
+// LONG-TERM MEMORY
+// Memory = Information (content) + Time Label (createdAt) + Relationships (tags)
+// Global pool, IndexedDB-backed, togglable in Settings (default OFF).
+// Naming: everything prefixed `mem*` to avoid clashing with the existing
+// context-compaction UI (memoryLog / logMemEntry / updateMemoryUI).
+// ═══════════════════════════════════════════════════════════════════
+const MEM_DB_NAME = 'ba_memories';
+const MEM_DB_VER = 1;
+const MEM_STORE = 'memories';
+const MEM_META_STORE = 'meta';
+const MEM_DEFAULTS = { enabled: false, autoExtract: true, maxRecall: 8, extractionModel: '' };
+let _memDbPromise = null;
+let _memCache = null;       // Array of all records, lazily loaded
+let _memExtractInFlight = 0; // prevent runaway parallel extractions
+
+function memGetSettings() {
+  const s = loadSettings() || {};
+  return { ...MEM_DEFAULTS, ...(s.memory || {}) };
+}
+function memIsEnabled() { return memGetSettings().enabled === true; }
+function genMemId() { return 'mem_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+function openMemDB() {
+  if (_memDbPromise) return _memDbPromise;
+  _memDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(MEM_DB_NAME, MEM_DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(MEM_STORE)) {
+        const store = db.createObjectStore(MEM_STORE, { keyPath: 'id' });
+        store.createIndex('byCreatedAt', 'createdAt');
+        store.createIndex('byTag', 'tags', { multiEntry: true });
+      }
+      if (!db.objectStoreNames.contains(MEM_META_STORE)) db.createObjectStore(MEM_META_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { _memDbPromise = null; reject(req.error); };
+  });
+  return _memDbPromise;
+}
+
+async function memLoadCache() {
+  if (_memCache) return _memCache;
+  try {
+    const db = await openMemDB();
+    const tx = db.transaction(MEM_STORE, 'readonly');
+    const req = tx.objectStore(MEM_STORE).getAll();
+    _memCache = await new Promise(r => { req.onsuccess = () => r(req.result || []); req.onerror = () => r([]); });
+  } catch (e) { console.warn('memLoadCache failed', e); _memCache = []; }
+  return _memCache;
+}
+
+async function memPutRaw(record) {
+  const db = await openMemDB();
+  const tx = db.transaction(MEM_STORE, 'readwrite');
+  tx.objectStore(MEM_STORE).put(record);
+  await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  if (_memCache) {
+    const i = _memCache.findIndex(m => m.id === record.id);
+    if (i >= 0) _memCache[i] = record; else _memCache.push(record);
+  }
+  if (typeof schedulePush === 'function') schedulePush();
+  return record;
+}
+
+async function memSave({ content, tags, type, source, convId, sourceTurn, pinned }) {
+  const c = (content || '').trim();
+  if (!c) throw new Error('memSave: content required');
+  const now = Date.now();
+  const record = {
+    id: genMemId(),
+    content: c,
+    type: type || 'fact',
+    tags: Array.isArray(tags) ? tags.map(t => String(t).toLowerCase().trim().replace(/['"`<>\\]/g, '')).filter(Boolean) : [],
+    createdAt: now,
+    updatedAt: now,
+    lastRecalledAt: null,
+    recallCount: 0,
+    pinned: !!pinned,
+    convId: convId || activeConvId || null,
+    sourceTurn: Number.isFinite(sourceTurn) ? sourceTurn : (typeof loopCount === 'number' ? loopCount : null),
+    source: source || 'manual'
+  };
+  await memPutRaw(record);
+  return record;
+}
+
+async function memUpdate(id, patch) {
+  const cache = await memLoadCache();
+  const rec = cache.find(m => m.id === id);
+  if (!rec) return null;
+  Object.assign(rec, patch, { updatedAt: Date.now() });
+  await memPutRaw(rec);
+  return rec;
+}
+
+async function memDelete(id) {
+  const db = await openMemDB();
+  const tx = db.transaction(MEM_STORE, 'readwrite');
+  tx.objectStore(MEM_STORE).delete(id);
+  await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  if (_memCache) _memCache = _memCache.filter(m => m.id !== id);
+  if (typeof schedulePush === 'function') schedulePush();
+}
+
+async function memClearStorage() {
+  const db = await openMemDB();
+  const tx = db.transaction(MEM_STORE, 'readwrite');
+  tx.objectStore(MEM_STORE).clear();
+  await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  _memCache = [];
+  if (typeof schedulePush === 'function') schedulePush();
+}
+
+async function memListAll() { return (await memLoadCache()).slice(); }
+
+// ── Tokenize text for keyword overlap — lowercase, 3+ chars, common stop words dropped.
+const _MEM_STOP = new Set(['the','a','an','and','or','but','is','are','was','were','be','been','being','to','of','in','on','for','with','as','at','by','from','that','this','these','those','it','its','you','your','we','our','i','me','my','they','them','their','he','she','do','does','did','have','has','had','not','no','so','if','then','than','which','who','what','how','why','when','where','can','could','would','should','will','shall','may','might','just','also','too','very','into','about','over','out','up','down','off','over']);
+function _memTokens(text) {
+  if (!text) return [];
+  const toks = String(text).toLowerCase().match(/[a-z0-9_\-]{3,}|[\u4e00-\u9fff]+/g) || [];
+  return toks.filter(t => !_MEM_STOP.has(t));
+}
+
+function _memQueryFromMessages(messages) {
+  if (!Array.isArray(messages)) return '';
+  // Pull last 2 user messages' plain text — that's the current intent signal.
+  const users = [];
+  for (let i = messages.length - 1; i >= 0 && users.length < 2; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    const t = getUserTextFromContent(m.content);
+    if (t) users.push(t);
+  }
+  return users.reverse().join('\n');
+}
+
+function _memRelativeLabel(ts, now) {
+  const diffMs = now - ts;
+  const day = 86400000;
+  if (diffMs < 60000) return 'just now';
+  if (diffMs < 3600000) return Math.floor(diffMs / 60000) + 'm ago';
+  if (diffMs < day) return Math.floor(diffMs / 3600000) + 'h ago';
+  const days = Math.floor(diffMs / day);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return days + ' days ago';
+  if (days < 30) return Math.floor(days / 7) + 'w ago';
+  if (days < 365) return Math.floor(days / 30) + 'mo ago';
+  return Math.floor(days / 365) + 'y ago';
+}
+function _memDateLabel(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function memRank(records, queryText, { limit = 8, now = Date.now() } = {}) {
+  const qTokens = new Set(_memTokens(queryText));
+  const day = 86400000;
+  const scored = records.map(rec => {
+    const age = Math.max(0, now - (rec.createdAt || 0));
+    // Recency: exp-decay with ~30d half-life, mapped to [0,1].
+    const recency = Math.exp(-age / (30 * day));
+    // Tag overlap: fraction of record tags matching query tokens.
+    let tagHits = 0;
+    for (const t of rec.tags || []) if (qTokens.has(String(t).toLowerCase())) tagHits++;
+    const tagOverlap = rec.tags?.length ? tagHits / rec.tags.length : 0;
+    // Keyword overlap: fraction of query tokens present in content.
+    const cTokens = new Set(_memTokens(rec.content));
+    let kwHits = 0;
+    for (const q of qTokens) if (cTokens.has(q)) kwHits++;
+    const kwOverlap = qTokens.size ? kwHits / qTokens.size : 0;
+    const pinnedBoost = rec.pinned ? 0.25 : 0;
+    const recallBoost = Math.min(0.15, (rec.recallCount || 0) * 0.02);
+    const score = 0.5 * recency + 0.3 * tagOverlap + 0.2 * kwOverlap + pinnedBoost + recallBoost;
+    return { rec, score, tagHits, kwHits };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+async function memRecallForPrompt(messages) {
+  try {
+    const cfg = memGetSettings();
+    if (!cfg.enabled) return '';
+    const all = await memLoadCache();
+    if (!all.length) return '';
+    const query = _memQueryFromMessages(messages);
+    const ranked = memRank(all, query, { limit: Math.max(0, cfg.maxRecall | 0) });
+    if (!ranked.length) return '';
+    // Require some relevance unless pinned — keep first few pinned even at zero score.
+    const meaningful = ranked.filter(r => r.score > 0.12 || r.rec.pinned);
+    const picked = meaningful.length ? meaningful : ranked.slice(0, Math.min(3, ranked.length));
+    if (!picked.length) return '';
+    const now = Date.now();
+    const lines = picked.map(({ rec }) => {
+      const tagStr = (rec.tags || []).map(t => '#' + t).join(' ');
+      const header = '[' + _memDateLabel(rec.createdAt) + ', ' + _memRelativeLabel(rec.createdAt, now) + (tagStr ? ', ' + tagStr : '') + (rec.pinned ? ', pinned' : '') + ']';
+      return '- ' + header + ' ' + rec.content;
+    });
+    // Bump recallCount / lastRecalledAt (best-effort, fire-and-forget).
+    for (const { rec } of picked) {
+      rec.lastRecalledAt = now;
+      rec.recallCount = (rec.recallCount || 0) + 1;
+      memPutRaw(rec).catch(() => {});
+    }
+    return '\n\n## Recalled Memories (from prior conversations)\nMemory = Information + Time Label + Relationships. Use these facts if relevant to the current request; ignore if stale or unrelated.\n' + lines.join('\n');
+  } catch (e) { console.warn('memRecallForPrompt failed', e); return ''; }
+}
+
+function _memNormalize(text) {
+  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Skip obvious no-ops: very short turns, questions with no declarative user claim,
+// or agent-continuation prompts. Saves an LLM call per turn.
+function _memShouldSkipExchange(userText, assistantText) {
+  const u = String(userText || '').trim();
+  if (!u) return true;
+  // Pure agent-continuation / short commands: skip.
+  if (u.length < 12) return true;
+  const shortDirective = /^(go|ok|continue|next|yes|no|run|test|stop|retry|again|more|done|fix|try|show|list|cat|ls|help|print|log|dump)\b/i;
+  if (u.length < 40 && shortDirective.test(u) && !/\b(prefer|use|i'?m|i am|we are|my|our|don'?t want|always|never|remember)\b/i.test(u)) return true;
+  // Has any declarative first-person / project claim?
+  const declarative = /\b(i'?m|i am|i prefer|i use|i like|i don'?t|i'?ll|i will|my |we are|we use|we prefer|our |the project|this project|always|never|remember|note that|for the record|decision:|policy:)\b/i;
+  const imperativeRemember = /\b(remember|记住|note this)\b/i.test(u);
+  // Question with no declarative content and no explicit "remember": skip.
+  const looksLikeQuestion = /\?$/.test(u) || /^(what|why|when|where|how|who|which|can|could|should|would|does|do|is|are|will)\b/i.test(u);
+  if (looksLikeQuestion && !declarative.test(u) && !imperativeRemember) return true;
+  return false;
+}
+
+// Fuzzy dedup: any existing memory whose token set overlaps >= 65% with
+// the candidate — treat as duplicate, even across arbitrary phrasing.
+function _memIsDuplicateFuzzy(candidateContent, existingRecords) {
+  const cand = _memNormalize(candidateContent);
+  if (!cand) return true;
+  const candTokens = new Set(_memTokens(cand));
+  if (candTokens.size === 0) return false;
+  for (const rec of existingRecords) {
+    const norm = _memNormalize(rec.content);
+    if (norm === cand) return true;
+    const other = new Set(_memTokens(norm));
+    if (other.size === 0) continue;
+    let hits = 0;
+    for (const t of candTokens) if (other.has(t)) hits++;
+    const smaller = Math.min(candTokens.size, other.size);
+    if (smaller >= 3 && hits / smaller >= 0.65) return true;
+  }
+  return false;
+}
+
+async function memExtractAfterTurn({ userText, assistantContent, loopCount: lc, convId }) {
+  // Concurrency guard — drop overlapping calls rather than pile them up.
+  if (_memExtractInFlight > 0) return;
+  _memExtractInFlight++;
+  try {
+    const cfg = memGetSettings();
+    if (!cfg.enabled || !cfg.autoExtract) return;
+    if (!_keys?.api_key) return;
+    const assistantText = Array.isArray(assistantContent)
+      ? assistantContent.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
+      : String(assistantContent || '').trim();
+    const userTrim = String(userText || '').trim();
+    if (_memShouldSkipExchange(userTrim, assistantText)) return;
+    const exchange = `[user] ${userTrim}\n\n[assistant] ${assistantText}`.slice(0, 8000);
+
+    // Seed the prompt with up to 12 recent memories so the model can self-dedupe.
+    const cache = await memLoadCache();
+    const recentSeed = cache.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 12)
+      .map(m => `- [${m.type || 'fact'}${(m.tags && m.tags.length) ? ' ' + m.tags.map(t => '#' + t).join(' ') : ''}] ${m.content}`)
+      .join('\n');
+
+    const sys = [
+      'You are a conservative memory curator. Extract durable long-term memories from the exchange below — or return an empty array if nothing durable was stated.',
+      '',
+      'SAVE only when the user EXPLICITLY stated ONE of these:',
+      '  - a personal preference ("I prefer pytest over unittest")',
+      '  - a project-specific fact / constraint ("Our API runs on Fastify", "Production DB is Postgres 15")',
+      '  - a durable identity or role fact ("I\'m a backend engineer at Acme")',
+      '  - an explicit decision / policy ("Going forward we\'ll use TypeScript strict mode")',
+      '  - an explicit instruction to remember something ("remember that the staging URL is X")',
+      '',
+      'DO NOT save:',
+      '  - questions the user asked or tasks they requested ("help me write a function", "what does X do")',
+      '  - anything the assistant proposed, inferred, or planned (only what the USER actually stated)',
+      '  - debugging steps, error messages, tool outputs, code snippets, file contents',
+      '  - ephemeral session state ("I just ran the tests", "this loop is broken")',
+      '  - restatements of common / public knowledge',
+      '  - anything already represented in the EXISTING MEMORIES list below — skip duplicates and near-duplicates, even if the wording differs',
+      '',
+      'OUTPUT: strict JSON only, no prose, no markdown fence. Schema:',
+      '{"memories":[{"content":"User prefers X over Y","type":"fact|preference|event|skill|note","tags":["lowercase","tokens"],"salience":1-5}]}',
+      'Each content: self-contained, third-person ("User prefers X", never "I prefer X"), <= 220 chars.',
+      'salience: 5 = must-remember long-term, 3 = probably useful, 1 = trivial. Only emit items with salience >= 3.',
+      'If the exchange contains nothing that qualifies, return {"memories":[]}. Prefer emptiness over noise.'
+    ].join('\n');
+
+    const userMsg = (recentSeed
+      ? `EXISTING MEMORIES (skip anything semantically similar):\n${recentSeed}\n\n`
+      : '') + `EXCHANGE TO ANALYZE:\n${exchange}`;
+
+    const model = cfg.extractionModel || API_MODEL;
+    let body;
+    if (PROVIDER === 'anthropic') {
+      body = { model, max_tokens: 800, system: sys, messages: [{ role: 'user', content: userMsg }], stream: false };
+    } else {
+      body = { model, messages: [{ role: 'system', content: sys }, { role: 'user', content: userMsg }], stream: false };
+    }
+    const resp = await fetch(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    let raw = '';
+    if (PROVIDER === 'anthropic') raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    else raw = data.choices?.[0]?.message?.content || '';
+    if (!raw) return;
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return;
+    let parsed;
+    try { parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)); } catch { return; }
+    const memos = Array.isArray(parsed?.memories) ? parsed.memories : [];
+    if (!memos.length) return;
+
+    // Fuzzy dedup against the full pool (not just last 7 days).
+    const existing = cache.slice();
+    let added = 0;
+    const rejectPrefix = /^(user (asked|wondered|requested|wanted to|is trying to|is working on|is exploring|is debugging)|user (ran|tried|tested|executed|fixed|wrote|created)\b)/i;
+    for (const m of memos) {
+      if (!m || typeof m.content !== 'string') continue;
+      const trimmed = m.content.trim();
+      if (trimmed.length < 8 || trimmed.length > 400) continue;
+      const salience = Number(m.salience);
+      if (Number.isFinite(salience) && salience < 3) continue;
+      // Reject items that describe ephemeral user actions rather than durable facts.
+      if (rejectPrefix.test(trimmed)) continue;
+      if (_memIsDuplicateFuzzy(trimmed, existing)) continue;
+      const tagsArr = Array.isArray(m.tags) ? m.tags.slice(0, 10) : [];
+      const type = ['fact','preference','event','skill','note'].includes(m.type) ? m.type : 'fact';
+      const saved = await memSave({ content: trimmed, tags: tagsArr, type, source: 'auto', convId: convId || activeConvId || null, sourceTurn: Number.isFinite(lc) ? lc : null });
+      existing.push(saved);
+      added++;
+    }
+    if (added > 0 && typeof logMemEntry === 'function') logMemEntry('read', `Extracted ${added} memory item${added === 1 ? '' : 's'}`);
+    if (added > 0 && document.getElementById('memoryModal')?.classList.contains('show')) renderMemoryList();
+  } catch (e) { console.warn('memExtract failed', e); }
+  finally { _memExtractInFlight = Math.max(0, _memExtractInFlight - 1); }
+}
+
+// ── UI ────────────────────────────────────────────────────────────────
+function renderMemoryButton() {
+  const btn = document.getElementById('memBtn');
+  if (!btn) return;
+  const enabled = memIsEnabled();
+  btn.style.display = enabled ? '' : 'none';
+}
+
+async function openMemoryModal() {
+  if (!memIsEnabled()) { appendSystemMsg('\u{1F9E0} Long-term memory is disabled. Enable it in Settings.'); return; }
+  await memLoadCache();
+  document.getElementById('memSearchInput').value = '';
+  document.getElementById('memFilterType').value = '';
+  document.getElementById('memFilterSource').value = '';
+  document.getElementById('memAddContent').value = '';
+  document.getElementById('memAddTags').value = '';
+  document.getElementById('memAddType').value = 'fact';
+  renderMemoryList();
+  document.getElementById('memoryModal').classList.add('show');
+}
+function closeMemoryModal() { document.getElementById('memoryModal').classList.remove('show'); }
+
+function _memCollectTags(records) {
+  const counts = new Map();
+  for (const r of records) for (const t of (r.tags || [])) counts.set(t, (counts.get(t) || 0) + 1);
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 14);
+}
+
+let _memActiveTag = '';
+function memFilterByTag(tag) {
+  _memActiveTag = _memActiveTag === tag ? '' : tag;
+  renderMemoryList();
+}
+
+function renderMemoryList() {
+  const listEl = document.getElementById('memList');
+  if (!listEl || !_memCache) return;
+  const q = (document.getElementById('memSearchInput')?.value || '').toLowerCase().trim();
+  const typeFilter = document.getElementById('memFilterType')?.value || '';
+  const srcFilter = document.getElementById('memFilterSource')?.value || '';
+  const now = Date.now();
+
+  let records = _memCache.slice().sort((a, b) => (b.pinned - a.pinned) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+  if (typeFilter) records = records.filter(r => r.type === typeFilter);
+  if (srcFilter) records = records.filter(r => (r.source || 'manual') === srcFilter);
+  if (_memActiveTag) records = records.filter(r => (r.tags || []).includes(_memActiveTag));
+  if (q) records = records.filter(r => {
+    if (r.content.toLowerCase().includes(q)) return true;
+    if ((r.tags || []).some(t => t.toLowerCase().includes(q))) return true;
+    if ((r.type || '').toLowerCase().includes(q)) return true;
+    return false;
+  });
+
+  // Tag chip rail
+  const tagEl = document.getElementById('memTagChips');
+  if (tagEl) {
+    const pairs = _memCollectTags(_memCache);
+    tagEl.innerHTML = pairs.map(([t, n]) => `<button type="button" onclick="memFilterByTag('${esc(t)}')" style="padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:${_memActiveTag === t ? 'var(--accent-orange)' : 'transparent'};color:${_memActiveTag === t ? '#fff' : 'var(--text-secondary)'};font-size:10px;cursor:pointer;font-family:'JetBrains Mono',monospace">#${esc(t)} <span style="opacity:.6">${n}</span></button>`).join('');
+  }
+
+  const statsEl = document.getElementById('memStats');
+  if (statsEl) statsEl.textContent = `${records.length} shown · ${_memCache.length} total${_memActiveTag ? ` · filter: #${_memActiveTag}` : ''}`;
+
+  if (!records.length) {
+    listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px">${_memCache.length ? 'No memories match current filters.' : 'No memories yet. Auto-extraction will save durable facts as you chat, or the agent can call memory_save.'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = records.map(r => {
+    const dateStr = _memDateLabel(r.createdAt);
+    const relStr = _memRelativeLabel(r.createdAt, now);
+    const tagHtml = (r.tags || []).map(t => `<span style="padding:1px 6px;background:var(--bg-root);border-radius:8px;font-size:10px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace">#${esc(t)}</span>`).join(' ');
+    const srcLabel = r.source || 'manual';
+    const typeColor = r.type === 'preference' ? 'var(--accent-orange)' : r.type === 'event' ? 'var(--accent-cyan)' : r.type === 'skill' ? '#b388ff' : r.type === 'note' ? 'var(--text-dim)' : 'var(--text-secondary)';
+    return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg-panel)">
+      <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
+        <div style="flex:1;font-size:12px;color:var(--text-primary);line-height:1.5;word-break:break-word">${esc(r.content)}</div>
+        <button type="button" title="${r.pinned ? 'Unpin' : 'Pin'}" onclick="memTogglePin('${r.id}')" style="background:transparent;border:none;color:${r.pinned ? 'var(--accent-orange)' : 'var(--text-dim)'};cursor:pointer;font-size:14px;padding:0 4px">\u{1F4CC}</button>
+        <button type="button" title="Delete" onclick="memDeleteFromUI('${r.id}')" style="background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:0 4px">\u2715</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--text-dim);font-family:'JetBrains Mono',monospace">
+        <span style="color:${typeColor}">${esc(r.type || 'fact')}</span>
+        <span>\u00B7</span>
+        <span>${esc(dateStr)} (${esc(relStr)})</span>
+        <span>\u00B7</span>
+        <span>${esc(srcLabel)}</span>
+        ${r.recallCount ? `<span>\u00B7</span><span title="Times injected into prompt">recalled ${r.recallCount}\u00D7</span>` : ''}
+        ${tagHtml ? `<span>\u00B7</span>${tagHtml}` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function memAddFromUI() {
+  const content = document.getElementById('memAddContent').value.trim();
+  if (!content) return;
+  const tags = document.getElementById('memAddTags').value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const type = document.getElementById('memAddType').value || 'fact';
+  await memSave({ content, tags, type, source: 'manual' });
+  document.getElementById('memAddContent').value = '';
+  document.getElementById('memAddTags').value = '';
+  renderMemoryList();
+}
+
+async function memDeleteFromUI(id) {
+  if (!confirm('Delete this memory?')) return;
+  await memDelete(id);
+  renderMemoryList();
+}
+
+async function memTogglePin(id) {
+  const rec = _memCache?.find(m => m.id === id);
+  if (!rec) return;
+  await memUpdate(id, { pinned: !rec.pinned });
+  renderMemoryList();
+}
+
+function memExport() {
+  const all = _memCache || [];
+  const blob = new Blob([JSON.stringify({ version: 1, exportedAt: Date.now(), memories: all }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'onepagent-memories-' + _memDateLabel(Date.now()) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function memImport() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/json,.json';
+  inp.onchange = async () => {
+    const file = inp.files?.[0]; if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const list = Array.isArray(data) ? data : (Array.isArray(data.memories) ? data.memories : []);
+      if (!list.length) { alert('No memories found in file.'); return; }
+      const cache = await memLoadCache();
+      const existing = new Set(cache.map(m => m.id));
+      let added = 0;
+      for (const m of list) {
+        if (!m || typeof m.content !== 'string') continue;
+        const rec = {
+          id: (m.id && !existing.has(m.id)) ? m.id : genMemId(),
+          content: m.content,
+          type: m.type || 'fact',
+          tags: Array.isArray(m.tags) ? m.tags.map(t => String(t).toLowerCase()) : [],
+          createdAt: Number.isFinite(m.createdAt) ? m.createdAt : Date.now(),
+          updatedAt: Date.now(),
+          lastRecalledAt: m.lastRecalledAt || null,
+          recallCount: m.recallCount || 0,
+          pinned: !!m.pinned,
+          convId: m.convId || null,
+          sourceTurn: m.sourceTurn ?? null,
+          source: m.source || 'manual'
+        };
+        await memPutRaw(rec);
+        added++;
+      }
+      renderMemoryList();
+      alert(`Imported ${added} memories.`);
+    } catch (e) { alert('Import failed: ' + e.message); }
+  };
+  inp.click();
+}
+
+async function memClearAll() {
+  if (!confirm('Delete ALL long-term memories? This cannot be undone.')) return;
+  await memClearStorage();
+  renderMemoryList();
+}
+
+// ── Tool handlers ─────────────────────────────────────────────────────
+async function toolMemorySave(input) {
+  if (!memIsEnabled()) return 'Error: long-term memory is disabled in Settings.';
+  const content = (input?.content || '').trim();
+  if (!content) return 'Error: content is required.';
+  const tags = Array.isArray(input?.tags) ? input.tags : [];
+  const type = ['fact','preference','event','skill','note'].includes(input?.type) ? input.type : 'fact';
+  const rec = await memSave({ content, tags, type, source: 'tool' });
+  if (document.getElementById('memoryModal')?.classList.contains('show')) renderMemoryList();
+  return `Saved memory ${rec.id} (${rec.type}${rec.tags.length ? ', tags: ' + rec.tags.map(t => '#' + t).join(' ') : ''}).`;
+}
+
+async function toolMemorySearch(input) {
+  if (!memIsEnabled()) return 'Error: long-term memory is disabled in Settings.';
+  const q = (input?.query || '').trim();
+  const limit = Math.min(25, Math.max(1, Number(input?.limit) || 8));
+  const all = await memLoadCache();
+  let pool = all;
+  if (Array.isArray(input?.tags) && input.tags.length) {
+    const want = new Set(input.tags.map(t => String(t).toLowerCase()));
+    pool = pool.filter(r => (r.tags || []).some(t => want.has(t)));
+  }
+  if (!pool.length) return 'No memories match the tag filter.';
+  const ranked = memRank(pool, q, { limit });
+  if (!ranked.length) return 'No memories found.';
+  const now = Date.now();
+  return ranked.map(({ rec, score }) => {
+    const tagStr = (rec.tags || []).map(t => '#' + t).join(' ');
+    return `- [${_memDateLabel(rec.createdAt)}, ${_memRelativeLabel(rec.createdAt, now)}${tagStr ? ', ' + tagStr : ''}${rec.pinned ? ', pinned' : ''}] (score ${score.toFixed(2)}) ${rec.content}`;
+  }).join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // TOOL DEFINITIONS (dynamic — includes skill tools)
 // ═══════════════════════════════════════════════════════════════════
 const BASE_TOOLS_ANTHROPIC = [
@@ -5307,6 +5990,13 @@ function rebuildToolDefs(headId = activeEntryId) {
   for (const mt of mcpTools) {
     allToolsAnthropic.push({ name: mt.name, description: mt.description || '', input_schema: mt.parameters || { type: 'object', properties: {}, required: [] } });
   }
+  // Add long-term memory tools when enabled
+  if (memIsEnabled()) {
+    allToolsAnthropic.push(
+      { name: 'memory_save', description: 'Save a durable fact to long-term memory. Use sparingly and only for information that should survive across conversations: user preferences, project constraints, decisions made, entity relationships, or environment facts the user stated. Do NOT save ephemeral task details, debugging steps, or public knowledge. Each fact must be self-contained, stated in third-person ("User prefers X"), <= 220 chars.', input_schema: { type: 'object', properties: { content: { type: 'string', description: 'The fact to remember, stated plainly and in third-person.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase topic / entity tags for retrieval (e.g. ["python","testing"]).' }, type: { type: 'string', enum: ['fact','preference','event','skill','note'], description: 'Classification. Defaults to fact.' } }, required: ['content'] } },
+      { name: 'memory_search', description: 'Search long-term memory for facts relevant to a query. Returns matching entries with their time labels, tags, and relevance scores. Use when the user asks about prior context, preferences, or decisions.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Free-text query describing what to recall.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Optional: restrict results to entries with these tags.' }, limit: { type: 'integer', description: 'Max results (1-25). Default 8.' } }, required: ['query'] } }
+    );
+  }
   allToolsOpenAI = allToolsAnthropic.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
   renderToolsGrid();
 }
@@ -5350,6 +6040,8 @@ async function executeTool(name, input) {
       case 'Fetch': return await toolFetch(input);
       case 'TodoWrite': return toolTodoWrite(input);
       case 'ExitPlanMode': return await toolExitPlanMode(input);
+      case 'memory_save': return await toolMemorySave(input);
+      case 'memory_search': return await toolMemorySearch(input);
       default:
         // Skill tool?
         if (skillToolHandlers[name]) {
@@ -6427,9 +7119,10 @@ function getUserTextFromContent(content) {
   if (!Array.isArray(content)) return '';
   return content.filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n\n').trim();
 }
-function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
+async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
-  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + planPrompt;
+  const memPrompt = await memRecallForPrompt(messages);
+  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + planPrompt + memPrompt;
   rebuildToolDefs(headId);
   if (PROVIDER === 'anthropic') {
     return {
@@ -6672,7 +7365,7 @@ async function _runAgentLoop(userText, options = {}) {
     while (true) {
       loopCount++; updateMemoryUI();
       await checkAndCompact();
-      const body = buildRequestBody(buildConversationFromEntries());
+      const body = await buildRequestBody(buildConversationFromEntries());
       body.stream = true;
       if (PROVIDER !== 'anthropic') {
         body.stream_options = { ...(body.stream_options || {}), include_usage: true };
@@ -6763,6 +7456,12 @@ async function _runAgentLoop(userText, options = {}) {
       msgEl.dataset.assistantEntryId = assistantEntry.id;
       updateMemoryUI();
       await runHooks('on_assistant_response', { content: result.content, loopCount, stopReason: result.stop_reason });
+      // Fire memory extraction ONCE per user turn — on the final response,
+      // not after every tool-use iteration. Cuts both cost and noise.
+      if (result.stop_reason !== 'tool_use' && memIsEnabled() && memGetSettings().autoExtract) {
+        memExtractAfterTurn({ userText, assistantContent: result.content, loopCount, convId: activeConvId })
+          .catch(e => console.warn('memExtractAfterTurn failed', e));
+      }
       const tus = result.content.filter(b => b.type === 'tool_use');
       if (tus.length) {
         const trs = [];
@@ -7686,6 +8385,8 @@ marked.setOptions({ gfm: true, breaks: true });
   loadWsConfig();
   renderHooks();
   renderTodos();
+  renderMemoryButton();
+  if (memIsEnabled()) { memLoadCache().catch(e => console.warn('Memory cache preload failed', e)); }
 
   // Load API keys from localStorage settings (instead of /config endpoint)
   try {
