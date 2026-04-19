@@ -979,14 +979,14 @@ document.addEventListener('DOMContentLoaded', function() {
       <button class="top-btn hide-mobile" onclick="runFsDiagnostics()" data-i18n="btn.diag">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()" data-i18n="btn.export">Export</button>
       <button class="top-btn hide-mobile top-btn-icon" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution" data-i18n-title="btn.planTitle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-4"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg><span data-i18n="btn.plan">Plan</span></button>
-      <button class="top-btn hide-mobile top-btn-icon" id="memBtn" onclick="openMemoryModal()" title="Long-term memory: facts persisted across conversations" data-i18n-title="btn.memoryTitle" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4 4 4 0 0 0-4 4 4 4 0 0 0 2 3.46A4 4 0 0 0 8 22a4 4 0 0 0 4-2 4 4 0 0 0 4 2 4 4 0 0 0 2-8.54A4 4 0 0 0 20 10a4 4 0 0 0-4-4 4 4 0 0 0-4-4Z"/><path d="M12 6v16M8 10h0M16 10h0M9 14h6"/></svg><span data-i18n="btn.memory">Memory</span></button>
+      <button class="top-btn hide-mobile top-btn-icon" id="memBtn" onclick="openMemoryModal()" title="Memory: facts persisted across conversations" data-i18n-title="btn.memoryTitle" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4 4 4 0 0 0-4 4 4 4 0 0 0 2 3.46A4 4 0 0 0 8 22a4 4 0 0 0 4-2 4 4 0 0 0 4 2 4 4 0 0 0 2-8.54A4 4 0 0 0 20 10a4 4 0 0 0-4-4 4 4 0 0 0-4-4Z"/><path d="M12 6v16M8 10h0M16 10h0M9 14h6"/></svg><span data-i18n="btn.memory">Memory</span></button>
       <span style="position:relative;display:inline-block">
         <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket" data-i18n-title="btn.syncTitle">&#x2601; <span data-i18n="btn.sync">Sync</span></button>
         <div id="syncMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:6px;min-width:240px;z-index:150;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
           <button class="top-btn" id="syncPushBtn" onclick="onSyncPushClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B06; <span data-i18n="btn.syncPush">Push now</span></button>
           <button class="top-btn" id="syncPullBtn" onclick="onSyncPullClick()" style="display:block;width:100%;text-align:left;margin-bottom:4px">&#x2B07; <span data-i18n="btn.syncPull">Pull now</span></button>
-          <div id="syncProgress" style="display:none;padding:4px 6px;border-top:1px solid var(--border);margin-top:4px"></div>
-          <div id="syncStatus" style="font-size:10px;color:var(--text-dim);padding:4px 6px;border-top:1px solid var(--border);margin-top:4px">Not configured.</div>
+        <div id="syncProgress" style="display:none;padding:4px 6px;border-top:1px solid var(--border);margin-top:4px"></div>
+          <div id="syncStatus" style="font-size:10px;color:var(--text-dim);padding:4px 6px;border-top:1px solid var(--border);margin-top:4px" data-i18n="sync.notConfigured">Not configured.</div>
         </div>
       </span>
       <button class="top-btn" onclick="openSettingsModal()" title="LLM & Tavily settings" data-i18n-title="btn.settingsTitle">&#x2699; <span data-i18n="btn.settings">Settings</span></button>
@@ -1163,25 +1163,25 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="modal-overlay" id="skillModal">
   <div class="modal">
     <div class="modal-header">
-      <h3>&#x26A1; Install Skill</h3>
+      <h3>&#x26A1; <span data-i18n="skillModal.title">Install Skill</span></h3>
       <button class="modal-close" onclick="closeSkillModal()">&times;</button>
     </div>
     <div class="modal-body">
       <div class="modal-tabs">
-        <button class="modal-tab active" onclick="switchSkillTab('market',this)">&#x1F3EA; Market</button>
-        <button class="modal-tab" onclick="switchSkillTab('file',this)">&#x1F4C2; File</button>
-        <button class="modal-tab" onclick="switchSkillTab('github',this)">&#x1F310; GitHub</button>
-        <button class="modal-tab" onclick="switchSkillTab('create',this)">&#x2795; Create</button>
+        <button class="modal-tab active" onclick="switchSkillTab('market',this)">&#x1F3EA; <span data-i18n="skillModal.tab.market">Market</span></button>
+        <button class="modal-tab" onclick="switchSkillTab('file',this)">&#x1F4C2; <span data-i18n="skillModal.tab.file">File</span></button>
+        <button class="modal-tab" onclick="switchSkillTab('github',this)">&#x1F310; <span data-i18n="skillModal.tab.github">GitHub</span></button>
+        <button class="modal-tab" onclick="switchSkillTab('create',this)">&#x2795; <span data-i18n="skillModal.tab.create">Create</span></button>
       </div>
 
       <!-- Marketplace Tab -->
       <div class="tab-content active" id="tab-market">
         <label style="display:flex;align-items:center;justify-content:space-between">
-          <span>Registry URL <span style="text-transform:none;color:var(--text-dim)">(JSON index)</span></span>
-          <button type="button" class="modal-btn secondary" onclick="loadMarketplace(true)" style="padding:2px 10px;font-size:10px">&#x21BB; Refresh</button>
+          <span><span data-i18n="skillModal.registryUrl">Registry URL</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="skillModal.registryHint">(JSON index)</span></span>
+          <button type="button" class="modal-btn secondary" onclick="loadMarketplace(true)" style="padding:2px 10px;font-size:10px">&#x21BB; <span data-i18n="skillModal.refresh">Refresh</span></button>
         </label>
         <input type="text" id="mpRegistryUrl" placeholder="https://raw.githubusercontent.com/sligter/onepagent-skills/main/registry.json">
-        <input type="text" id="mpSearch" placeholder="Search name / description / tag..." oninput="renderMarketplaceList()" style="margin-bottom:8px">
+        <input type="text" id="mpSearch" placeholder="Search name / description / tag..." data-i18n-placeholder="skillModal.searchPh" oninput="renderMarketplaceList()" style="margin-bottom:8px">
         <div id="mpStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
         <div id="mpList" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
       </div>
@@ -1190,37 +1190,37 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="tab-content" id="tab-file">
         <div class="skill-file-drop" id="skillFileDrop">
           <input type="file" accept=".skill,.zip,.json,.md" onchange="handleSkillFile(event)">
-          Drop .skill, .zip, .json, or SKILL.md here
+          <span data-i18n="skillModal.fileDrop">Drop .skill, .zip, .json, or SKILL.md here</span>
         </div>
         <div id="skillFilePreview" style="display:none;margin-bottom:12px"></div>
       </div>
 
       <!-- GitHub Tab -->
       <div class="tab-content" id="tab-github">
-        <label>GitHub Repository URL</label>
+        <label data-i18n="skillModal.githubUrl">GitHub Repository URL</label>
         <input type="text" id="skillGithubUrl" placeholder="https://github.com/user/repo or user/repo">
-        <label>Branch (optional)</label>
+        <label data-i18n="skillModal.githubBranch">Branch (optional)</label>
         <input type="text" id="skillGithubBranch" placeholder="main" value="main">
-        <label>Skill directory path (optional)</label>
+        <label data-i18n="skillModal.githubPath">Skill directory path (optional)</label>
         <input type="text" id="skillGithubPath" placeholder="e.g. .skills/calculator (auto-detects SKILL.md)">
-        <button class="modal-btn primary" onclick="importFromGithub()" style="width:100%">&#x1F4E5; Fetch &amp; Install</button>
+        <button class="modal-btn primary" onclick="importFromGithub()" style="width:100%">&#x1F4E5; <span data-i18n="skillModal.githubFetch">Fetch &amp; Install</span></button>
       </div>
 
       <!-- Create Tab -->
       <div class="tab-content" id="tab-create">
-        <label>Skill Name</label>
+        <label data-i18n="skillModal.createName">Skill Name</label>
         <input type="text" id="skillCreateName" placeholder="my-custom-skill">
-        <label>Icon (emoji)</label>
+        <label data-i18n="skillModal.createIcon">Icon (emoji)</label>
         <input type="text" id="skillCreateIcon" placeholder="&#x1F680;" value="&#x1F680;" style="width:60px">
-        <label>Description</label>
-        <input type="text" id="skillCreateDesc" placeholder="What this skill does">
-        <label>Trigger Pattern (regex, optional)</label>
-        <input type="text" id="skillCreateTrigger" placeholder="e.g. review|code review|PR">
-        <label>SKILL.md Body (instructions for the agent)</label>
-        <textarea id="skillCreatePrompt" placeholder="Markdown instructions loaded when skill triggers. Keep concise — context window is shared."></textarea>
-        <label>Custom Tool (JSON, optional)</label>
+        <label data-i18n="skillModal.createDesc">Description</label>
+        <input type="text" id="skillCreateDesc" placeholder="What this skill does" data-i18n-placeholder="skillModal.createDescPh">
+        <label data-i18n="skillModal.createTrigger">Trigger Pattern (regex, optional)</label>
+        <input type="text" id="skillCreateTrigger" placeholder="e.g. review|code review|PR" data-i18n-placeholder="skillModal.createTriggerPh">
+        <label data-i18n="skillModal.createBody">SKILL.md Body (instructions for the agent)</label>
+        <textarea id="skillCreatePrompt" placeholder="Markdown instructions loaded when skill triggers. Keep concise — context window is shared." data-i18n-placeholder="skillModal.createBodyPh"></textarea>
+        <label data-i18n="skillModal.createTool">Custom Tool (JSON, optional)</label>
         <textarea id="skillCreateTool" placeholder='[{"name":"my_tool","description":"...","parameters":{...},"handler":"return ..."}]' style="min-height:60px"></textarea>
-        <button class="modal-btn primary" onclick="createSkill()" style="width:100%;margin-top:4px">&#x2705; Create Skill</button>
+        <button class="modal-btn primary" onclick="createSkill()" style="width:100%;margin-top:4px">&#x2705; <span data-i18n="skillModal.createBtn">Create Skill</span></button>
       </div>
     </div>
   </div>
@@ -1230,27 +1230,27 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="modal-overlay" id="mcpToolModal">
   <div class="modal">
     <div class="modal-header">
-      <h3>&#x1F527; Add Custom MCP Tool</h3>
+      <h3>&#x1F527; <span data-i18n="mcpModal.title">Add Custom MCP Tool</span></h3>
       <button class="modal-close" onclick="closeMcpToolModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <label>Tool Name</label>
-      <input type="text" id="mcpToolName" placeholder="e.g. web_search, send_email">
-      <label>Description</label>
-      <input type="text" id="mcpToolDesc" placeholder="What this tool does">
-      <label>Parameters (JSON Schema)</label>
+      <label data-i18n="mcpModal.name">Tool Name</label>
+      <input type="text" id="mcpToolName" placeholder="e.g. web_search, send_email" data-i18n-placeholder="mcpModal.namePh">
+      <label data-i18n="mcpModal.desc">Description</label>
+      <input type="text" id="mcpToolDesc" placeholder="What this tool does" data-i18n-placeholder="mcpModal.descPh">
+      <label data-i18n="mcpModal.params">Parameters (JSON Schema)</label>
       <textarea id="mcpToolParams" placeholder='{"type":"object","properties":{"query":{"type":"string","description":"Search query"}},"required":["query"]}' style="min-height:80px"></textarea>
-      <label>Server URL (MCP endpoint, optional)</label>
+      <label data-i18n="mcpModal.url">Server URL (MCP endpoint, optional)</label>
       <input type="text" id="mcpToolUrl" placeholder="https://mcp-server.example.com/tool">
-      <label>Handler JS (if no server URL, executed in browser)</label>
+      <label data-i18n="mcpModal.handler">Handler JS (if no server URL, executed in browser)</label>
       <textarea id="mcpToolHandler" placeholder="// input is the tool parameters object&#10;return 'Result: ' + input.query;" style="min-height:60px"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="modal-btn primary" onclick="addMcpTool()" style="flex:1">&#x2705; Add Tool</button>
-        <button class="modal-btn secondary" onclick="closeMcpToolModal()" style="flex:1">Cancel</button>
+        <button class="modal-btn primary" onclick="addMcpTool()" style="flex:1">&#x2705; <span data-i18n="mcpModal.addTool">Add Tool</span></button>
+        <button class="modal-btn secondary" onclick="closeMcpToolModal()" style="flex:1" data-i18n="modal.cancel">Cancel</button>
       </div>
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-        <label>Installed Custom Tools</label>
-        <div id="mcpToolList" style="font-size:11px;color:var(--text-dim)">None</div>
+        <label data-i18n="mcpModal.installed">Installed Custom Tools</label>
+        <div id="mcpToolList" style="font-size:11px;color:var(--text-dim)" data-i18n="mcpModal.noneInstalled">None</div>
       </div>
     </div>
   </div>
@@ -1258,87 +1258,87 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal">
-  <div class="modal">
+  <div class="modal" style="width:clamp(320px,94vw,680px)">
     <div class="modal-header">
-      <h3>&#x2699; Settings</h3>
+      <h3>&#x2699; <span data-i18n="settings.title">Settings</span></h3>
       <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <label>LLM Provider</label>
+      <label data-i18n="settings.provider">LLM Provider</label>
       <select id="setProvider" onchange="onProviderChange()" style="width:100%;padding:8px 10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:12px">
         <option value="anthropic">anthropic</option>
         <option value="openai">openai</option>
         <option value="deepseek">deepseek</option>
       </select>
-      <label>API Endpoint <span style="text-transform:none;color:var(--text-dim)">(base URL, e.g. https://api.anthropic.com)</span></label>
+      <label><span data-i18n="settings.endpoint">API Endpoint</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.endpointHint">(base URL, e.g. https://api.anthropic.com)</span></label>
       <input type="text" id="setEndpoint" placeholder="https://api.anthropic.com">
-      <label>LLM API Key</label>
+      <label data-i18n="settings.apiKey">LLM API Key</label>
       <input type="password" id="setApiKey" placeholder="sk-...">
       <label style="display:flex;align-items:center;justify-content:space-between">
-        <span>Available Models <span style="text-transform:none;color:var(--text-dim)">(from API; hold Ctrl/Cmd to multi-select)</span></span>
-        <button type="button" class="modal-btn secondary" onclick="fetchModelsIntoSettings()" style="padding:2px 10px;font-size:10px">&#x21BB; Fetch from API</button>
+        <span><span data-i18n="settings.availableModels">Available Models</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.availableModelsHint">(from API; hold Ctrl/Cmd to multi-select)</span></span>
+        <button type="button" class="modal-btn secondary" onclick="fetchModelsIntoSettings()" style="padding:2px 10px;font-size:10px">&#x21BB; <span data-i18n="settings.fetchFromApi">Fetch from API</span></button>
       </label>
       <select id="setAvailableModels" multiple size="6" style="width:100%;padding:6px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:6px"></select>
       <div style="display:flex;gap:6px;margin-bottom:12px">
-        <input type="text" id="setCustomModel" placeholder="custom-model-id" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomModelToList();}" style="flex:1;margin-bottom:0">
-        <button type="button" class="modal-btn secondary" onclick="addCustomModelToList()" style="padding:4px 10px;font-size:10px">&#x2795; Add</button>
-        <button type="button" class="modal-btn secondary" onclick="addSelectedModelsToList()" style="padding:4px 10px;font-size:10px">&#x21A1; Add Selected</button>
+        <input type="text" id="setCustomModel" placeholder="custom-model-id" data-i18n-placeholder="settings.customModelPh" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomModelToList();}" style="flex:1;margin-bottom:0">
+        <button type="button" class="modal-btn secondary" onclick="addCustomModelToList()" style="padding:4px 10px;font-size:10px">&#x2795; <span data-i18n="settings.addModel">Add</span></button>
+        <button type="button" class="modal-btn secondary" onclick="addSelectedModelsToList()" style="padding:4px 10px;font-size:10px">&#x21A1; <span data-i18n="settings.addSelected">Add Selected</span></button>
       </div>
-      <label>Selected Models <span style="text-transform:none;color:var(--text-dim)">(one per line; edit freely)</span></label>
+      <label><span data-i18n="settings.selectedModels">Selected Models</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.selectedModelsHint">(one per line; edit freely)</span></label>
       <textarea id="setModels" placeholder="claude-sonnet-4-20250514&#10;claude-opus-4-20250514" style="min-height:80px"></textarea>
-      <label>Default Model <span style="text-transform:none;color:var(--text-dim)">(optional; first model used if empty)</span></label>
+      <label><span data-i18n="settings.defaultModel">Default Model</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.defaultModelHint">(optional; first model used if empty)</span></label>
       <input type="text" id="setDefaultModel" placeholder="claude-sonnet-4-20250514">
-      <label>Model Context Lengths <span style="text-transform:none;color:var(--text-dim)">(model=tokens per line)</span></label>
+      <label><span data-i18n="settings.contextLengths">Model Context Lengths</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.contextLengthsHint">(model=tokens per line)</span></label>
       <textarea id="setModelContexts" placeholder="claude-sonnet-4-20250514=200000&#10;gpt-4o=128000" style="min-height:60px"></textarea>
-      <label>Tavily API Key <span style="text-transform:none;color:var(--text-dim)">(for Web Search)</span></label>
+      <label><span data-i18n="settings.tavilyKey">Tavily API Key</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.tavilyKeyHint">(for Web Search)</span></label>
       <input type="password" id="setTavilyKey" placeholder="tvly-...">
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
-      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x1F9E0; Long-term Memory <span style="text-transform:none;color:var(--text-dim);font-weight:400">(persists facts across conversations)</span></label>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemEnabled" style="width:auto;margin:0"> Enable long-term memory (default off)</label>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemAutoExtract" style="width:auto;margin:0" checked> Auto-extract facts after each assistant turn (adds one lightweight LLM call)</label>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x1F9E0; <span data-i18n="settings.memHeader">Memory</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.memHeaderHint">(persists facts across conversations)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemEnabled" style="width:auto;margin:0"> <span data-i18n="settings.memEnable">Enable memory (default off)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setMemAutoExtract" style="width:auto;margin:0" checked> <span data-i18n="settings.memAutoExtract">Auto-extract facts after each assistant turn (adds one lightweight LLM call)</span></label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Top-N memories to recall</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.memTopN">Top-N memories to recall</label>
         <input type="number" id="setMemMaxRecall" min="0" max="40" placeholder="8" style="width:80px;margin-bottom:0">
       </div>
-      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px">Memory = Information + Time Label + Searchable Relationships. Records live in IndexedDB (<code>ba_memories</code>) and sync via the cloud-sync layer below when configured.</div>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px" data-i18n="settings.memDesc">Memory = Information + Time Label + Searchable Relationships. Records live in IndexedDB and sync via the cloud-sync layer below when configured.</div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
-      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x2601; Cloud Sync <span style="text-transform:none;color:var(--text-dim);font-weight:400">(S3-compatible \u2014 AWS, R2, MinIO, B2)</span></label>
-      <label>Endpoint <span style="text-transform:none;color:var(--text-dim)">(e.g. https://s3.us-east-1.amazonaws.com)</span></label>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">&#x2601; <span data-i18n="settings.cloudHeader">Cloud Sync</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.cloudHeaderHint">(S3-compatible \u2014 AWS, R2, MinIO, B2)</span></label>
+      <label><span data-i18n="settings.s3Endpoint">Endpoint</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.s3EndpointHint">(e.g. https://s3.us-east-1.amazonaws.com)</span></label>
       <input type="text" id="setS3Endpoint" placeholder="https://s3.us-east-1.amazonaws.com">
       <div style="display:flex;gap:8px">
         <div style="flex:1">
-          <label>Region</label>
+          <label data-i18n="settings.s3Region">Region</label>
           <input type="text" id="setS3Region" placeholder="us-east-1">
         </div>
         <div style="flex:1">
-          <label>Bucket</label>
+          <label data-i18n="settings.s3Bucket">Bucket</label>
           <input type="text" id="setS3Bucket" placeholder="my-onepagent-bucket">
         </div>
       </div>
-      <label>Prefix <span style="text-transform:none;color:var(--text-dim)">(optional)</span></label>
+      <label><span data-i18n="settings.s3Prefix">Prefix</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.s3PrefixHint">(optional)</span></label>
       <input type="text" id="setS3Prefix" placeholder="onepagent/">
-      <label>Access Key ID</label>
+      <label data-i18n="settings.s3AccessKey">Access Key ID</label>
       <input type="password" id="setS3AccessKey">
-      <label>Secret Access Key</label>
+      <label data-i18n="settings.s3SecretKey">Secret Access Key</label>
       <input type="password" id="setS3SecretKey">
-      <label>Encryption Passphrase <span style="text-transform:none;color:var(--text-dim)">(optional; losing it = losing backup)</span></label>
+      <label><span data-i18n="settings.s3Passphrase">Encryption Passphrase</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.s3PassphraseHint">(optional; losing it = losing backup)</span></label>
       <input type="password" id="setS3Passphrase">
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setS3AutoPush" style="width:auto;margin:0"> Auto-push on every change (10s debounce)</label>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="setS3PathStyle" style="width:auto;margin:0" checked> Use path-style URLs (required for MinIO / R2)</label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setS3AutoPush" style="width:auto;margin:0"> <span data-i18n="settings.s3AutoPush">Auto-push on every change (10s debounce)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="setS3PathStyle" style="width:auto;margin:0" checked> <span data-i18n="settings.s3PathStyle">Use path-style URLs (required for MinIO / R2)</span></label>
       <div style="display:flex;gap:6px;margin-bottom:6px">
-        <button type="button" class="modal-btn secondary" onclick="testS3Connection()" style="flex:1;padding:6px 10px;font-size:11px">Test connection</button>
-        <button type="button" class="modal-btn secondary" onclick="showCorsHint()" style="flex:1;padding:6px 10px;font-size:11px">Show CORS config</button>
+        <button type="button" class="modal-btn secondary" onclick="testS3Connection()" style="flex:1;padding:6px 10px;font-size:11px" data-i18n="settings.testConn">Test connection</button>
+        <button type="button" class="modal-btn secondary" onclick="showCorsHint()" style="flex:1;padding:6px 10px;font-size:11px" data-i18n="settings.showCors">Show CORS config</button>
       </div>
       <div id="s3Status" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="modal-btn primary" onclick="saveSettings()" style="flex:1">&#x2705; Save</button>
-        <button class="modal-btn secondary" onclick="closeSettingsModal()" style="flex:1">Cancel</button>
+        <button class="modal-btn primary" onclick="saveSettings()" style="flex:1">&#x2705; <span data-i18n="modal.save">Save</span></button>
+        <button class="modal-btn secondary" onclick="closeSettingsModal()" style="flex:1" data-i18n="modal.cancel">Cancel</button>
       </div>
-      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
+      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5" data-i18n="settings.privacyNote">
         Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.
       </div>
     </div>
@@ -1349,18 +1349,18 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="modal-overlay" id="planModal">
   <div class="modal" style="width:clamp(320px,92vw,640px)">
     <div class="modal-header">
-      <h3>&#x1F4CB; Review Plan</h3>
+      <h3>&#x1F4CB; <span data-i18n="planModal.title">Review Plan</span></h3>
       <button class="modal-close" onclick="rejectPlan()">&times;</button>
     </div>
     <div class="modal-body">
       <div id="planModalBody" style="max-height:50vh;overflow-y:auto;padding:10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;margin-bottom:12px;font-size:12px;line-height:1.5"></div>
-      <label>Feedback <span style="text-transform:none;color:var(--text-dim)">(only used on Reject \u2014 tells the agent what to revise)</span></label>
-      <textarea id="planModalFeedback" placeholder="e.g. use threads instead of async; skip the cache layer" style="min-height:60px"></textarea>
+      <label><span data-i18n="planModal.feedback">Feedback</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="planModal.feedbackHint">(only used on Reject \u2014 tells the agent what to revise)</span></label>
+      <textarea id="planModalFeedback" placeholder="e.g. use threads instead of async; skip the cache layer" data-i18n-placeholder="planModal.feedbackPh" style="min-height:60px"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="modal-btn primary" onclick="approvePlan()" style="flex:1">&#x2705; Approve &amp; Execute</button>
-        <button class="modal-btn secondary" onclick="rejectPlan()" style="flex:1">&#x270D; Reject &amp; Revise</button>
+        <button class="modal-btn primary" onclick="approvePlan()" style="flex:1">&#x2705; <span data-i18n="planModal.approve">Approve &amp; Execute</span></button>
+        <button class="modal-btn secondary" onclick="rejectPlan()" style="flex:1">&#x270D; <span data-i18n="planModal.reject">Reject &amp; Revise</span></button>
       </div>
-      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
+      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5" data-i18n="planModal.note">
         Approve turns Plan Mode off and lets the agent execute write tools. Reject keeps Plan Mode on and returns your feedback so the agent can revise.
       </div>
     </div>
@@ -1371,13 +1371,13 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="modal-overlay" id="hookModal">
   <div class="modal">
     <div class="modal-header">
-      <h3>&#x26A1; <span id="hookModalTitle">Add Hook</span></h3>
+      <h3>&#x26A1; <span id="hookModalTitle" data-i18n="hookModal.addTitle">Add Hook</span></h3>
       <button class="modal-close" onclick="closeHookModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <label>Name</label>
-      <input type="text" id="hookName" placeholder="log-all-tools">
-      <label>Event</label>
+      <label data-i18n="hookModal.name">Name</label>
+      <input type="text" id="hookName" placeholder="log-all-tools" data-i18n-placeholder="hookModal.namePh">
+      <label data-i18n="hookModal.event">Event</label>
       <select id="hookEvent" style="width:100%;padding:8px 10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:12px">
         <option value="pre_tool">pre_tool &mdash; before a tool runs (can block / modify input)</option>
         <option value="post_tool">post_tool &mdash; after a tool runs (can modify output)</option>
@@ -1386,7 +1386,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <option value="on_assistant_response">on_assistant_response &mdash; assistant finished a turn</option>
         <option value="on_stop">on_stop &mdash; agent loop finished</option>
       </select>
-      <label>Handler <span style="text-transform:none;color:var(--text-dim)">(JS body; receives <code>ctx</code>; see hints below)</span></label>
+      <label><span data-i18n="hookModal.handler">Handler</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="hookModal.handlerHint">(JS body; receives <code>ctx</code>; see hints below)</span></label>
       <textarea id="hookCode" spellcheck="false" style="min-height:160px;font-family:'JetBrains Mono',monospace" placeholder="// ctx has { name, input, output, toolUseId, isError, error, text, content, loopCount, totalTokens } depending on event.
 // Return values:
 //   { note: 'msg' }           -> logged to Memory panel
@@ -1396,11 +1396,11 @@ document.addEventListener('DOMContentLoaded', function() {
 //   { overrideText: '...' }   -> on_user_submit: rewrite text
 // Example:
 // if (ctx.name === 'Bash') return { block: true, reason: 'no bash' };"></textarea>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="hookEnabled" style="width:auto;margin:0" checked> Enabled</label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:10px"><input type="checkbox" id="hookEnabled" style="width:auto;margin:0" checked> <span data-i18n="hookModal.enabled">Enabled</span></label>
       <div id="hookModalStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="modal-btn primary" onclick="saveHookFromModal()" style="flex:1">&#x2705; Save</button>
-        <button class="modal-btn secondary" onclick="closeHookModal()" style="flex:1">Cancel</button>
+        <button class="modal-btn primary" onclick="saveHookFromModal()" style="flex:1">&#x2705; <span data-i18n="modal.save">Save</span></button>
+        <button class="modal-btn secondary" onclick="closeHookModal()" style="flex:1" data-i18n="modal.cancel">Cancel</button>
       </div>
       <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
         Hooks run with the same power as JSExec. They can read and modify agent state. Errors in a hook are swallowed and logged &mdash; they never break the agent loop.
@@ -1413,12 +1413,12 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="modal-overlay" id="memoryModal">
   <div class="modal" style="width:clamp(320px,96vw,860px)">
     <div class="modal-header">
-      <h3>&#x1F9E0; Long-term Memory <span style="font-size:10px;color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px">Information + Time + Relationships</span></h3>
+      <h3>&#x1F9E0; <span data-i18n="memoryModal.title">Memory</span> <span style="font-size:10px;color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px">Information + Time + Relationships</span></h3>
       <button class="modal-close" onclick="closeMemoryModal()">&times;</button>
     </div>
     <div class="modal-body">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <input type="text" id="memSearchInput" placeholder="Search content, tags, type\u2026" oninput="renderMemoryList()" style="flex:1;min-width:160px;margin-bottom:0">
+        <input type="text" id="memSearchInput" placeholder="Search content, tags, type\u2026" data-i18n-placeholder="memoryModal.searchPh" oninput="renderMemoryList()" style="flex:1;min-width:160px;margin-bottom:0">
         <select id="memFilterType" onchange="renderMemoryList()" style="padding:6px 8px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px">
           <option value="">all types</option>
           <option value="fact">fact</option>
@@ -1433,14 +1433,14 @@ document.addEventListener('DOMContentLoaded', function() {
           <option value="tool">tool</option>
           <option value="manual">manual</option>
         </select>
-        <label style="display:flex;align-items:center;gap:4px;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-secondary);margin:0;white-space:nowrap"><input type="checkbox" id="memShowRetired" onchange="renderMemoryList()" style="width:auto;margin:0"> Show retired</label>
+        <label style="display:flex;align-items:center;gap:4px;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-secondary);margin:0;white-space:nowrap"><input type="checkbox" id="memShowRetired" onchange="renderMemoryList()" style="width:auto;margin:0"> <span data-i18n="memoryModal.showRetired">Show retired</span></label>
       </div>
       <div id="memTagChips" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
       <div id="memStats" style="font-size:10px;color:var(--text-dim);margin-bottom:6px"></div>
       <div id="memList" style="max-height:55vh;overflow-y:auto;padding-right:4px"></div>
 
       <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
-        <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">Add memory manually</label>
+        <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px" data-i18n="memoryModal.addHeader">Add memory manually</label>
         <textarea id="memAddContent" placeholder="e.g. User prefers pytest over unittest for new Python projects." style="min-height:60px"></textarea>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <input type="text" id="memAddTags" placeholder="tags: python, testing" style="flex:1;min-width:160px;margin-bottom:0">
@@ -1451,14 +1451,14 @@ document.addEventListener('DOMContentLoaded', function() {
             <option value="skill">skill</option>
             <option value="note">note</option>
           </select>
-          <button type="button" class="modal-btn primary" onclick="memAddFromUI()" style="padding:6px 14px;font-size:11px">&#x2795; Add</button>
+          <button type="button" class="modal-btn primary" onclick="memAddFromUI()" style="padding:6px 14px;font-size:11px">&#x2795; <span data-i18n="modal.add">Add</span></button>
         </div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button type="button" class="modal-btn secondary" onclick="memExport()" style="flex:1;padding:6px 10px;font-size:11px">&#x2B07; Export JSON</button>
         <button type="button" class="modal-btn secondary" onclick="memImport()" style="flex:1;padding:6px 10px;font-size:11px">&#x2B06; Import JSON</button>
-        <button type="button" class="modal-btn secondary" onclick="memClearAll()" style="flex:1;padding:6px 10px;font-size:11px;color:#ff6b6b">&#x1F5D1; Clear all</button>
-        <button type="button" class="modal-btn secondary" onclick="closeMemoryModal()" style="flex:1;padding:6px 10px;font-size:11px">Close</button>
+        <button type="button" class="modal-btn secondary" onclick="memClearAll()" style="flex:1;padding:6px 10px;font-size:11px;color:var(--accent-red)">&#x1F5D1; <span data-i18n="memoryModal.clearAll">Clear all</span></button>
+        <button type="button" class="modal-btn secondary" onclick="closeMemoryModal()" style="flex:1;padding:6px 10px;font-size:11px" data-i18n="modal.close">Close</button>
       </div>
       <div style="margin-top:10px;font-size:10px;color:var(--text-dim);line-height:1.5">
         Memories carry a time label and tags. They are injected into the system prompt at the start of each turn ranked by recency, tag overlap, and keyword match. Pinned memories are never auto-pruned.
@@ -1509,7 +1509,7 @@ const I18N = {
     'btn.plan': 'Plan',
     'btn.planTitle': 'Plan Mode: block writes, require approval before execution',
     'btn.memory': 'Memory',
-    'btn.memoryTitle': 'Long-term memory: facts persisted across conversations',
+    'btn.memoryTitle': 'Memory: facts persisted across conversations',
     'btn.sync': 'Sync',
     'btn.syncTitle': 'Cloud sync to S3-compatible bucket',
     'btn.syncPush': 'Push now',
@@ -1561,9 +1561,136 @@ const I18N = {
     'mem.messages': 'Messages',
     'mem.tokens': 'Tokens',
     'mem.autoCompact': 'Auto-Compact Memory',
+    'mem.disabledHint': 'Memory is disabled. Enable it in Settings.',
     // Status mini-badges
     'ws.noKey': 'no key',
+    'ws.ready': 'ready',
+    'ws.notConfigured': 'not configured',
     'ws.testQuery': 'Test query...',
+    // Sync status
+    'sync.notConfigured': 'Not configured \u2014 open Settings.',
+    'sync.neverSynced': 'Never synced.',
+    'sync.lastSynced': 'Last synced',
+    'sync.justNow': 'just now',
+    'sync.minAgo': 'min ago',
+    'sync.hourAgo': 'h ago',
+    'sync.dayAgo': 'd ago',
+    'sync.encrypted': 'encrypted',
+    // Common modal actions
+    'modal.save': 'Save',
+    'modal.cancel': 'Cancel',
+    'modal.close': 'Close',
+    'modal.confirm': 'Confirm',
+    'modal.delete': 'Delete',
+    'modal.add': 'Add',
+    // Settings modal
+    'settings.title': 'Settings',
+    'settings.provider': 'LLM Provider',
+    'settings.endpoint': 'API Endpoint',
+    'settings.endpointHint': '(base URL, e.g. https://api.anthropic.com)',
+    'settings.apiKey': 'LLM API Key',
+    'settings.availableModels': 'Available Models',
+    'settings.availableModelsHint': '(from API; hold Ctrl/Cmd to multi-select)',
+    'settings.fetchFromApi': 'Fetch from API',
+    'settings.customModelPh': 'custom-model-id',
+    'settings.addModel': 'Add',
+    'settings.addSelected': 'Add Selected',
+    'settings.selectedModels': 'Selected Models',
+    'settings.selectedModelsHint': '(one per line; edit freely)',
+    'settings.defaultModel': 'Default Model',
+    'settings.defaultModelHint': '(optional; first model used if empty)',
+    'settings.contextLengths': 'Model Context Lengths',
+    'settings.contextLengthsHint': '(model=tokens per line)',
+    'settings.tavilyKey': 'Tavily API Key',
+    'settings.tavilyKeyHint': '(for Web Search)',
+    'settings.memHeader': 'Memory',
+    'settings.memHeaderHint': '(persists facts across conversations)',
+    'settings.memEnable': 'Enable memory (default off)',
+    'settings.memAutoExtract': 'Auto-extract facts after each assistant turn (adds one lightweight LLM call)',
+    'settings.memTopN': 'Top-N memories to recall',
+    'settings.memDesc': 'Memory = Information + Time Label + Searchable Relationships. Records live in IndexedDB and sync via the cloud-sync layer below when configured.',
+    'settings.cloudHeader': 'Cloud Sync',
+    'settings.cloudHeaderHint': '(S3-compatible \u2014 AWS, R2, MinIO, B2)',
+    'settings.s3Endpoint': 'Endpoint',
+    'settings.s3EndpointHint': '(e.g. https://s3.us-east-1.amazonaws.com)',
+    'settings.s3Region': 'Region',
+    'settings.s3Bucket': 'Bucket',
+    'settings.s3Prefix': 'Prefix',
+    'settings.s3PrefixHint': '(optional)',
+    'settings.s3AccessKey': 'Access Key ID',
+    'settings.s3SecretKey': 'Secret Access Key',
+    'settings.s3Passphrase': 'Encryption Passphrase',
+    'settings.s3PassphraseHint': '(optional; losing it = losing backup)',
+    'settings.s3AutoPush': 'Auto-push on every change (10s debounce)',
+    'settings.s3PathStyle': 'Use path-style URLs (required for MinIO / R2)',
+    'settings.testConn': 'Test connection',
+    'settings.showCors': 'Show CORS config',
+    'settings.privacyNote': 'Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.',
+    // Skill install modal
+    'skillModal.title': 'Install Skill',
+    'skillModal.tab.market': 'Market',
+    'skillModal.tab.file': 'File',
+    'skillModal.tab.github': 'GitHub',
+    'skillModal.tab.create': 'Create',
+    'skillModal.registryUrl': 'Registry URL',
+    'skillModal.registryHint': '(JSON index)',
+    'skillModal.refresh': 'Refresh',
+    'skillModal.searchPh': 'Search name / description / tag...',
+    'skillModal.fileDrop': 'Drop .skill, .zip, .json, or SKILL.md here',
+    'skillModal.githubUrl': 'GitHub Repository URL',
+    'skillModal.githubBranch': 'Branch (optional)',
+    'skillModal.githubPath': 'Skill directory path (optional)',
+    'skillModal.githubFetch': 'Fetch & Install',
+    'skillModal.createName': 'Skill Name',
+    'skillModal.createIcon': 'Icon (emoji)',
+    'skillModal.createDesc': 'Description',
+    'skillModal.createDescPh': 'What this skill does',
+    'skillModal.createTrigger': 'Trigger Pattern (regex, optional)',
+    'skillModal.createTriggerPh': 'e.g. review|code review|PR',
+    'skillModal.createBody': 'SKILL.md Body (instructions for the agent)',
+    'skillModal.createBodyPh': 'Markdown instructions loaded when skill triggers. Keep concise \u2014 context window is shared.',
+    'skillModal.createTool': 'Custom Tool (JSON, optional)',
+    'skillModal.createBtn': 'Create Skill',
+    // MCP tool modal
+    'mcpModal.title': 'Add Custom MCP Tool',
+    'mcpModal.name': 'Tool Name',
+    'mcpModal.namePh': 'my_search_tool',
+    'mcpModal.desc': 'Description',
+    'mcpModal.descPh': 'What this tool does',
+    'mcpModal.params': 'Parameters (JSON Schema)',
+    'mcpModal.url': 'Server URL (MCP endpoint, optional)',
+    'mcpModal.handler': 'Handler JS (if no server URL, executed in browser)',
+    'mcpModal.addTool': 'Add Tool',
+    'mcpModal.installed': 'Installed Custom Tools',
+    'mcpModal.noneInstalled': 'None',
+    // Plan approval modal
+    'planModal.title': 'Review Plan',
+    'planModal.feedback': 'Feedback',
+    'planModal.feedbackHint': '(only used on Reject \u2014 tells the agent what to revise)',
+    'planModal.feedbackPh': 'e.g. use threads instead of async; skip the cache layer',
+    'planModal.approve': 'Approve & Execute',
+    'planModal.reject': 'Reject & Revise',
+    'planModal.note': 'Approve turns Plan Mode off and lets the agent execute write tools. Reject keeps Plan Mode on and returns your feedback so the agent can revise.',
+    // Hook editor modal
+    'hookModal.addTitle': 'Add Hook',
+    'hookModal.editTitle': 'Edit Hook',
+    'hookModal.name': 'Name',
+    'hookModal.namePh': 'log-all-tools',
+    'hookModal.event': 'Event',
+    'hookModal.handler': 'Handler',
+    'hookModal.handlerHint': '(JS body; receives ctx; see hints below)',
+    'hookModal.enabled': 'Enabled',
+    // Memory viewer modal
+    'memoryModal.title': 'Memory',
+    'memoryModal.searchPh': 'Search content, tags, type\u2026',
+    'memoryModal.showRetired': 'Show retired',
+    'memoryModal.addHeader': 'Add memory manually',
+    'memoryModal.clearAll': 'Clear all',
+    // Preset / common labels
+    'label.type': 'Type',
+    'label.source': 'Source',
+    'label.tags': 'Tags',
+    'label.content': 'Content',
   },
   zh: {
     // Top bar
@@ -1580,7 +1707,7 @@ const I18N = {
     'btn.plan': '计划',
     'btn.planTitle': '计划模式：禁止写入，执行前需审批',
     'btn.memory': '记忆',
-    'btn.memoryTitle': '长期记忆：跨对话持久保留事实',
+    'btn.memoryTitle': '记忆：跨对话持久保留事实',
     'btn.sync': '同步',
     'btn.syncTitle': '同步至 S3 兼容存储',
     'btn.syncPush': '立即上传',
@@ -1632,9 +1759,136 @@ const I18N = {
     'mem.messages': '消息',
     'mem.tokens': '令牌',
     'mem.autoCompact': '自动压缩内存',
+    'mem.disabledHint': '记忆功能已关闭。请在设置中启用。',
     // Status mini-badges
     'ws.noKey': '无密钥',
+    'ws.ready': '就绪',
+    'ws.notConfigured': '未配置',
     'ws.testQuery': '测试查询…',
+    // Sync status
+    'sync.notConfigured': '未配置 \u2014 请打开设置。',
+    'sync.neverSynced': '从未同步。',
+    'sync.lastSynced': '最近同步',
+    'sync.justNow': '刚刚',
+    'sync.minAgo': '分钟前',
+    'sync.hourAgo': '小时前',
+    'sync.dayAgo': '天前',
+    'sync.encrypted': '已加密',
+    // Common modal actions
+    'modal.save': '保存',
+    'modal.cancel': '取消',
+    'modal.close': '关闭',
+    'modal.confirm': '确认',
+    'modal.delete': '删除',
+    'modal.add': '添加',
+    // Settings modal
+    'settings.title': '设置',
+    'settings.provider': 'LLM 提供方',
+    'settings.endpoint': 'API 端点',
+    'settings.endpointHint': '（基础 URL，例如 https://api.anthropic.com）',
+    'settings.apiKey': 'LLM API Key',
+    'settings.availableModels': '可用模型',
+    'settings.availableModelsHint': '（来自 API；按住 Ctrl/Cmd 多选）',
+    'settings.fetchFromApi': '从 API 获取',
+    'settings.customModelPh': 'custom-model-id',
+    'settings.addModel': '添加',
+    'settings.addSelected': '添加已选',
+    'settings.selectedModels': '已选模型',
+    'settings.selectedModelsHint': '（每行一个；可自由编辑）',
+    'settings.defaultModel': '默认模型',
+    'settings.defaultModelHint': '（可选；留空则使用首个模型）',
+    'settings.contextLengths': '模型上下文长度',
+    'settings.contextLengthsHint': '（每行 "模型=令牌数"）',
+    'settings.tavilyKey': 'Tavily API Key',
+    'settings.tavilyKeyHint': '（用于网页搜索）',
+    'settings.memHeader': '记忆',
+    'settings.memHeaderHint': '（跨对话持久保留事实）',
+    'settings.memEnable': '启用记忆（默认关闭）',
+    'settings.memAutoExtract': '每轮助手回复后自动抽取事实（新增一次轻量 LLM 调用）',
+    'settings.memTopN': '回忆 Top-N 条',
+    'settings.memDesc': '记忆 = 信息 + 时间标签 + 可搜索关系。数据保存在 IndexedDB，并可通过下方的云端同步模块同步。',
+    'settings.cloudHeader': '云端同步',
+    'settings.cloudHeaderHint': '（S3 兼容 \u2014 AWS / R2 / MinIO / B2）',
+    'settings.s3Endpoint': '端点',
+    'settings.s3EndpointHint': '（例如 https://s3.us-east-1.amazonaws.com）',
+    'settings.s3Region': '区域',
+    'settings.s3Bucket': '存储桶',
+    'settings.s3Prefix': '前缀',
+    'settings.s3PrefixHint': '（可选）',
+    'settings.s3AccessKey': 'Access Key ID',
+    'settings.s3SecretKey': 'Secret Access Key',
+    'settings.s3Passphrase': '加密口令',
+    'settings.s3PassphraseHint': '（可选；遗失将无法恢复备份）',
+    'settings.s3AutoPush': '每次变更自动推送（10 秒防抖）',
+    'settings.s3PathStyle': '使用 path-style URL（MinIO / R2 必选）',
+    'settings.testConn': '测试连接',
+    'settings.showCors': '查看 CORS 配置',
+    'settings.privacyNote': '设置（包括 S3 凭据与加密口令）仅保存在本地浏览器 localStorage。密钥只会发送到你配置的 API 端点或 S3 存储桶。',
+    // Skill install modal
+    'skillModal.title': '安装技能',
+    'skillModal.tab.market': '市场',
+    'skillModal.tab.file': '文件',
+    'skillModal.tab.github': 'GitHub',
+    'skillModal.tab.create': '创建',
+    'skillModal.registryUrl': '注册表 URL',
+    'skillModal.registryHint': '（JSON 索引）',
+    'skillModal.refresh': '刷新',
+    'skillModal.searchPh': '搜索名称 / 描述 / 标签…',
+    'skillModal.fileDrop': '将 .skill、.zip、.json 或 SKILL.md 拖到此处',
+    'skillModal.githubUrl': 'GitHub 仓库 URL',
+    'skillModal.githubBranch': '分支（可选）',
+    'skillModal.githubPath': '技能目录路径（可选）',
+    'skillModal.githubFetch': '获取并安装',
+    'skillModal.createName': '技能名称',
+    'skillModal.createIcon': '图标（emoji）',
+    'skillModal.createDesc': '描述',
+    'skillModal.createDescPh': '此技能的功能',
+    'skillModal.createTrigger': '触发模式（正则，可选）',
+    'skillModal.createTriggerPh': '例如 review|code review|PR',
+    'skillModal.createBody': 'SKILL.md 内容（给 Agent 的指令）',
+    'skillModal.createBodyPh': 'Markdown 指令，在技能触发时加载。请保持简洁 \u2014 上下文窗口是共享的。',
+    'skillModal.createTool': '自定义工具（JSON，可选）',
+    'skillModal.createBtn': '创建技能',
+    // MCP tool modal
+    'mcpModal.title': '添加自定义 MCP 工具',
+    'mcpModal.name': '工具名称',
+    'mcpModal.namePh': 'my_search_tool',
+    'mcpModal.desc': '描述',
+    'mcpModal.descPh': '此工具的功能',
+    'mcpModal.params': '参数（JSON Schema）',
+    'mcpModal.url': '服务器 URL（MCP 端点，可选）',
+    'mcpModal.handler': '处理 JS（无服务器 URL 时在浏览器执行）',
+    'mcpModal.addTool': '添加工具',
+    'mcpModal.installed': '已安装的自定义工具',
+    'mcpModal.noneInstalled': '无',
+    // Plan approval modal
+    'planModal.title': '审阅计划',
+    'planModal.feedback': '反馈',
+    'planModal.feedbackHint': '（仅在拒绝时使用 \u2014 告诉 Agent 如何修订）',
+    'planModal.feedbackPh': '例如：使用线程而非异步；跳过缓存层',
+    'planModal.approve': '批准并执行',
+    'planModal.reject': '拒绝并修订',
+    'planModal.note': '批准会关闭计划模式并允许 Agent 调用写入工具。拒绝保留计划模式并返回你的反馈供 Agent 修订。',
+    // Hook editor modal
+    'hookModal.addTitle': '添加钩子',
+    'hookModal.editTitle': '编辑钩子',
+    'hookModal.name': '名称',
+    'hookModal.namePh': 'log-all-tools',
+    'hookModal.event': '事件',
+    'hookModal.handler': '处理器',
+    'hookModal.handlerHint': '（JS 函数体；接收 ctx；参见下方说明）',
+    'hookModal.enabled': '启用',
+    // Memory viewer modal
+    'memoryModal.title': '记忆',
+    'memoryModal.searchPh': '搜索内容、标签、类型…',
+    'memoryModal.showRetired': '显示已废弃',
+    'memoryModal.addHeader': '手动添加记忆',
+    'memoryModal.clearAll': '清空全部',
+    // Preset / common labels
+    'label.type': '类型',
+    'label.source': '来源',
+    'label.tags': '标签',
+    'label.content': '内容',
   }
 };
 let CURRENT_LANG = (function() {
@@ -1676,6 +1930,9 @@ function setLanguage(lang) {
   try { if (typeof updateLangButton === 'function') updateLangButton(); } catch {}
   try { if (typeof setStatus === 'function' && !isGenerating) setStatus('ready', t('status.ready')); } catch {}
   try { if (typeof updateMemoryUI === 'function') updateMemoryUI(); } catch {}
+  try { if (typeof updateWsStatus === 'function') updateWsStatus(); } catch {}
+  try { if (typeof renderMcpToolList === 'function') renderMcpToolList(); } catch {}
+  try { if (typeof _updateSyncStatus === 'function') _updateSyncStatus(); } catch {}
 }
 function toggleLanguage() { setLanguage(CURRENT_LANG === 'zh' ? 'en' : 'zh'); }
 function updateLangButton() {
@@ -5347,19 +5604,19 @@ function _updateSyncStatus() {
   const el = document.getElementById('syncStatus');
   if (!el) return;
   const cfg = _loadS3Cfg();
-  if (!_s3Configured(cfg)) { el.textContent = 'Not configured \u2014 open Settings.'; return; }
+  if (!_s3Configured(cfg)) { el.textContent = t('sync.notConfigured'); return; }
   const last = Number(localStorage.getItem(S3_LAST_SYNC_KEY) || 0);
-  if (!last) { el.textContent = 'Never synced.'; return; }
+  if (!last) { el.textContent = t('sync.neverSynced'); return; }
   const diff = Date.now() - last;
   const mins = Math.round(diff / 60000);
   const hours = Math.round(diff / 3600000);
   const days = Math.round(diff / 86400000);
   let ago;
-  if (diff < 60000) ago = 'just now';
-  else if (mins < 60) ago = mins + ' min ago';
-  else if (hours < 24) ago = hours + ' h ago';
-  else ago = days + ' d ago';
-  el.textContent = 'Last synced ' + ago + (cfg.passphrase ? ' \u2014 encrypted' : '');
+  if (diff < 60000) ago = t('sync.justNow');
+  else if (mins < 60) ago = mins + ' ' + t('sync.minAgo');
+  else if (hours < 24) ago = hours + ' ' + t('sync.hourAgo');
+  else ago = days + ' ' + t('sync.dayAgo');
+  el.textContent = t('sync.lastSynced') + ' ' + ago + (cfg.passphrase ? ' \u2014 ' + t('sync.encrypted') : '');
 }
 async function onSyncPushClick() {
   try { await pushSnapshotToS3(); } catch (e) { appendSystemMsg('\u26A0 Push failed: ' + (e.message || e)); }
@@ -5467,8 +5724,8 @@ function removeMcpTool(name) {
 
 function renderMcpToolList() {
   const el = document.getElementById('mcpToolList');
-  if (!mcpTools.length) { el.innerHTML = 'None'; return; }
-  el.innerHTML = mcpTools.map(t => `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0"><span>\u{1F527} ${esc(t.name)}</span><span class="c-del" style="opacity:1;cursor:pointer" onclick="removeMcpTool('${esc(t.name)}')">&times;</span></div>`).join('');
+  if (!mcpTools.length) { el.textContent = t('mcpModal.noneInstalled'); return; }
+  el.innerHTML = mcpTools.map(mt => `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0"><span>\u{1F527} ${esc(mt.name)}</span><span class="c-del" style="opacity:1;cursor:pointer" onclick="removeMcpTool('${esc(mt.name)}')">&times;</span></div>`).join('');
 }
 
 async function executeMcpTool(name, input) {
@@ -6016,7 +6273,7 @@ function renderMemoryButton() {
 }
 
 async function openMemoryModal() {
-  if (!memIsEnabled()) { appendSystemMsg('\u{1F9E0} Long-term memory is disabled. Enable it in Settings.'); return; }
+  if (!memIsEnabled()) { appendSystemMsg('\u{1F9E0} ' + t('mem.disabledHint')); return; }
   await memLoadCache();
   document.getElementById('memSearchInput').value = '';
   document.getElementById('memFilterType').value = '';
@@ -6324,7 +6581,10 @@ let _editingHookId = null;
 function openHookModal(id) {
   _editingHookId = id || null;
   const h = id ? hooks.find(x => x.id === id) : null;
-  document.getElementById('hookModalTitle').textContent = h ? 'Edit Hook' : 'Add Hook';
+  const titleEl = document.getElementById('hookModalTitle');
+  const titleKey = h ? 'hookModal.editTitle' : 'hookModal.addTitle';
+  titleEl.setAttribute('data-i18n', titleKey);
+  titleEl.textContent = t(titleKey);
   document.getElementById('hookName').value = h?.name || '';
   document.getElementById('hookEvent').value = h?.event || 'pre_tool';
   document.getElementById('hookCode').value = h?.code || '';
@@ -6516,11 +6776,12 @@ function saveWsConfig() {
 function updateWsStatus() {
   const el = document.getElementById('wsStatus');
   if (!el) return;
+  el.removeAttribute('data-i18n');
   if (_keys?.tavily_api_key) {
-    el.textContent = '\u25CF ready';
+    el.textContent = '\u25CF ' + t('ws.ready');
     el.className = 'ws-status ok';
   } else {
-    el.textContent = 'not configured';
+    el.textContent = t('ws.notConfigured');
     el.className = 'ws-status err';
   }
 }
