@@ -1473,6 +1473,11 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div id="s3Status" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--accent-red);text-transform:none;letter-spacing:0;font-size:12px">&#x26A0; <span data-i18n="settings.dangerHeader">Danger Zone</span></label>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:8px" data-i18n="settings.clearAllDesc">Delete all local settings, conversations, memories, skills, files, sync config, and cached data on this device.</div>
+      <button type="button" class="modal-btn secondary" onclick="clearAllAppData()" style="width:100%;padding:8px 10px;font-size:11px;color:var(--accent-red);border-color:rgba(255,107,107,.35)">&#x1F5D1; <span data-i18n="settings.clearAllBtn">Clear all local data</span></button>
+
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="modal-btn primary" onclick="saveSettings()" style="flex:1">&#x2705; <span data-i18n="modal.save">Save</span></button>
         <button class="modal-btn secondary" onclick="closeSettingsModal()" style="flex:1" data-i18n="modal.cancel">Cancel</button>
@@ -1794,6 +1799,12 @@ const I18N = {
     'settings.s3PathStyle': 'Use path-style URLs (required for MinIO / R2)',
     'settings.testConn': 'Test connection',
     'settings.showCors': 'Show CORS config',
+    'settings.dangerHeader': 'Danger Zone',
+    'settings.clearAllDesc': 'Delete all local settings, conversations, memories, skills, files, sync config, and cached data on this device.',
+    'settings.clearAllBtn': 'Clear all local data',
+    'settings.clearAllConfirm1': 'Delete ALL local data on this device?',
+    'settings.clearAllConfirm2': 'Final confirmation: this will permanently erase settings, conversations, memories, skills, local files, sync config, and cached blobs. Continue?',
+    'settings.clearAllFailed': 'Failed to clear local data: ',
     'settings.privacyNote': 'Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.',
     // Skill install modal
     'skillModal.title': 'Install Skill',
@@ -2043,6 +2054,12 @@ const I18N = {
     'settings.s3PathStyle': '使用 path-style URL（MinIO / R2 必选）',
     'settings.testConn': '测试连接',
     'settings.showCors': '查看 CORS 配置',
+    'settings.dangerHeader': '危险操作',
+    'settings.clearAllDesc': '删除当前设备上的全部本地设置、对话、记忆、技能、文件、同步配置与缓存数据。',
+    'settings.clearAllBtn': '清除全部本地数据',
+    'settings.clearAllConfirm1': '确定要删除当前设备上的全部本地数据吗？',
+    'settings.clearAllConfirm2': '最后确认：这会永久清除设置、对话、记忆、本地文件、技能、同步配置和缓存 Blob。是否继续？',
+    'settings.clearAllFailed': '清除本地数据失败：',
     'settings.privacyNote': '设置（包括 S3 凭据与加密口令）仅保存在本地浏览器 localStorage。密钥只会发送到你配置的 API 端点或 S3 存储桶。',
     // Skill install modal
     'skillModal.title': '安装技能',
@@ -5533,6 +5550,48 @@ function openSettingsModal() {
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('show'); }
+
+async function clearAllAppData() {
+  const first = t('settings.clearAllConfirm1', 'Delete ALL local data on this device?');
+  const second = t('settings.clearAllConfirm2', 'Final confirmation: this will permanently erase settings, conversations, memories, skills, local files, sync config, and cached blobs. Continue?');
+  if (!confirm(first)) return;
+  if (!confirm(second)) return;
+  try {
+    closeSettingsModal();
+    try {
+      if (navigator?.storage?.getDirectory) {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry('blobs', { recursive: true }).catch(() => {});
+      }
+    } catch {}
+    try {
+      if ('caches' in window) {
+        const names = await caches.keys();
+        await Promise.all(names.map(name => caches.delete(name)));
+      }
+    } catch {}
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch {}
+    const dbs = [CONV_DB_NAME, BLOB_DB_NAME, SKILL_DB_NAME, MEM_DB_NAME];
+    await Promise.all(dbs.map(name => new Promise(resolve => {
+      try {
+        const req = indexedDB.deleteDatabase(name);
+        req.onsuccess = req.onerror = req.onblocked = () => resolve();
+      } catch { resolve(); }
+    })));
+    try {
+      Object.keys(localStorage).forEach(k => { if (k.startsWith('ba_')) localStorage.removeItem(k); });
+    } catch {}
+    try { sessionStorage.clear(); } catch {}
+    window.location.reload();
+  } catch (e) {
+    alert((t('settings.clearAllFailed', 'Failed to clear local data: ') || 'Failed to clear local data: ') + (e?.message || e));
+  }
+}
 
 async function fetchModelsIntoSettings() {
   const status = document.getElementById('setStatus');
