@@ -31,14 +31,16 @@ OnePagent is a **single-file, zero-build, browser-native** AI agent workbench. O
 
 - **Single-file deployment** — Drop `onepagent.html` on any static host or open it locally. No build, no dependency chain.
 - **Multi-provider LLM** — Built-in support for Anthropic, OpenAI, DeepSeek, and any custom endpoint. Keys are injected by a Service Worker, never leak into URLs or logs.
+- **🧠 Reasoning / thinking levels** — Inline selector with OpenAI-matching tiers (`off / minimal / low / medium / high / xhigh`). Routed to `reasoning.effort` for OpenAI-compatible endpoints and to `thinking.budget_tokens` for Anthropic.
 - **Long context with auto-compaction** — Per-model context-window configuration; when approaching the limit, an LLM summarizer compresses history while preserving key decisions and code changes.
-- **Tools & MCP** — File I/O, shell, code-gen, and form rendering are exposed as tools. Add your own MCP tools via URL endpoint or in-browser JS handler.
+- **🔌 MCP Servers & Tools** — Import real MCP servers (`streamable_http` + legacy `sse` transports) by pasting the Claude-Desktop-style `mcpServers` JSON; Bearer-token auth, session management (`Mcp-Session-Id`), and an optional CORS proxy for browser-blocked endpoints. Plus the original custom-tool mode: URL endpoint or in-browser JS handler.
 - **📋 Plan Mode** — Toggle a "plan-first" workflow: agent uses read-only tools to investigate, drafts a plan, waits for your approval, then executes. Writes (`Write` / `Edit` / `Bash` / `PythonExec` / `JSExec` / MCP) are blocked until approval.
 - **✅ TodoWrite** — A `TodoWrite` built-in tool the agent calls to maintain a user-visible, per-conversation task list (pending / in-progress / completed). See multi-step progress at a glance.
 - **⚡ Hooks runtime** — User-defined JS handlers on agent lifecycle events (`pre_tool`, `post_tool`, `on_error`, `on_user_submit`, `on_assistant_response`, `on_stop`). Can block, modify input/output, or log. Same power level as JSExec.
 - **Python sandbox** — Execute Python snippets right in the browser via Pyodide, no server needed.
 - **Web Search** — Tavily integration with `basic` / `advanced` depth modes; results are fed directly to the agent.
 - **Skills system** — Install `.skill` / `.zip` packs, pull from GitHub, or create in-page. Each skill carries its own prompt + tools.
+- **📁 Conversation folders** — Group conversations into named folders, with drag-and-drop between folders and the root, a per-folder "+" button to create conversations directly inside, and right-click rename / delete / move.
 - **Conversation management** — Multiple sessions, auto-persistence to IndexedDB, one-click export, token-based memory bar visualization.
 - **☁ Cloud Sync (S3)** — Sync conversations, skills, and settings to your own S3-compatible bucket (AWS, Cloudflare R2, MinIO, Backblaze B2). Content-addressed + incremental: only changed objects upload. Optional AES-256-GCM end-to-end encryption. Binary files are deduplicated by SHA-256.
 - **Theming** — Dark / light themes driven by CSS variables; code highlighting swaps in sync.
@@ -298,10 +300,13 @@ All configuration and conversation data lives in the browser. Lightweight keys g
 | `ba_settings` | Provider / Endpoint / Keys / Models / Context Lengths |
 | `ba_selected_model` | Currently-selected model |
 | `ba_active_conv` | Last-opened conversation id |
+| `ba_think_level` | Reasoning / thinking level (`off / minimal / low / medium / high / xhigh`) |
 | `ba_ws_config` | Tavily search depth & result count |
 | `ba_theme` | `dark` / `light` |
 | `ba_skills` | Skill metadata (files live in IDB) |
-| `ba_mcp_tools` | Custom MCP tool definitions |
+| `ba_mcp_tools` | Custom MCP tool definitions (server-sourced tools excluded; regenerated on connect) |
+| `ba_mcp_servers` | MCP server configs (transport, url, bearer token, per-server CORS proxy) |
+| `ba_mcp_cors_proxy` | Global CORS proxy prepended to MCP requests |
 | `ba_disabled_tools` | Tool on/off state |
 | `ba_hooks` | User-defined lifecycle hook handlers |
 | `ba_s3_sync` | S3 bucket config (endpoint, creds, passphrase) |
@@ -310,8 +315,10 @@ All configuration and conversation data lives in the browser. Lightweight keys g
 
 | IndexedDB Database | Stores | Contents |
 |---|---|---|
-| `ba_conversations` | `data` / `meta` | Full conversation data + metadata index |
+| `ba_conversations` | `data` / `meta` | Full conversation data + metadata index (incl. folder assignments) |
 | `ba_skill_files` | `files` | Skill file payloads (text + binary) |
+
+> **Conversation folders** are stored in the `meta` object store under a separate `folders` key; each conversation's `folderId` is preserved across S3 sync roundtrips.
 
 Data is **never** uploaded to any third-party server (unless you configure Cloud Sync to your own bucket). Clearing browser data (localStorage + IndexedDB) = resetting OnePagent.
 
@@ -334,7 +341,50 @@ Left panel **SKILLS → + Create**: fill in name, trigger description, SKILL.md 
 
 ### Add a custom tool (MCP)
 
-Right panel **TOOLS → + MCP**:
+Right panel **TOOLS → + MCP**. The modal has two tabs:
+
+**1. Import Server** — paste a Claude-Desktop-style `mcpServers` JSON config and connect to real MCP servers over `streamable_http` or legacy `sse`:
+
+```json
+{
+  "mcpServers": {
+    "howtocook-mcp": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/f52bea66764c4f/mcp",
+      "token": "optional-bearer-token"
+    }
+  }
+}
+```
+
+- **Transports** — `streamable_http` (POST JSON-RPC, response may be JSON or SSE stream) and `sse` (EventSource + endpoint event + POST). Session tracking via `Mcp-Session-Id` is handled automatically.
+- **Bearer token** — pass via `"token"`, `"bearer_token"`, `"authorization"`, or `"headers": { "Authorization": "Bearer …" }`. Sent as `Authorization: Bearer <token>` on every request. For SSE servers (where `EventSource` can't set headers) the token is appended as `?access_token=…`.
+- **Tool discovery** — on connect, the client sends `initialize`, then `tools/list`, then registers every returned tool into the agent's toolbox. Calls route through `tools/call` and handle `content[]` blocks of text / image / resource.
+- **Auto-connect** — servers are reconnected on page load; failures surface as a red status dot with an inline error you can hover.
+
+**2. CORS proxy (optional)** — most MCP servers don't send `Access-Control-Allow-Origin` for browser origins, so direct fetches fail with CORS. Set a proxy URL at the top of the Import tab; it's prepended to every MCP request (use `{url}` placeholder for query-param-style proxies). A minimal Cloudflare Worker is enough:
+
+```js
+export default {
+  async fetch(request) {
+    const u = new URL(request.url);
+    const target = u.pathname.slice(1) + u.search;
+    if (!target) return new Response('Usage: /<full-target-url>', { status: 400 });
+    if (request.method === 'OPTIONS') return new Response(null, { headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id, Accept',
+    }});
+    const resp = await fetch(target, { method: request.method, headers: request.headers, body: ['GET','HEAD'].includes(request.method) ? undefined : request.body });
+    const h = new Headers(resp.headers);
+    h.set('Access-Control-Allow-Origin', '*');
+    h.set('Access-Control-Expose-Headers', 'Mcp-Session-Id, *');
+    return new Response(resp.body, { status: resp.status, headers: h });
+  }
+};
+```
+
+**3. Custom Tool** — the original mode:
 
 - **MCP URL mode** — tool calls POST to your MCP endpoint
 - **Browser JS mode** — `handler` is a JS snippet executed in-browser; `input` is the tool's argument object
@@ -358,6 +408,9 @@ Message rendering uses the inlined **Pretext engine** — canvas-based precise t
 - [x] Plan Mode (write-gated, exploration-friendly, Markdown plan approval)
 - [x] TodoWrite tool + per-conversation task list panel
 - [x] Real Hooks runtime (6 lifecycle events, full JS power, block / modify / log)
+- [x] Reasoning / thinking level selector (OpenAI-matching tiers + Anthropic extended-thinking budgets)
+- [x] MCP server import (`streamable_http` + `sse` transports, Bearer auth, optional CORS proxy)
+- [x] Conversation folders (drag-and-drop, context-menu move, per-folder new-conversation button)
 - [ ] Global memory system (cross-conversation long-term recall)
 - [ ] Local models (via `window.ai` / WebGPU)
 

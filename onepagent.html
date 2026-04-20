@@ -1340,6 +1340,9 @@ document.addEventListener('DOMContentLoaded', function() {
         <button class="mcp-tab-btn" data-mcp-tab="tool" onclick="switchMcpTab('tool')" data-i18n="mcpModal.tabTool">Custom Tool</button>
       </div>
       <div class="mcp-tab-pane" data-mcp-pane="server">
+        <label data-i18n="mcpModal.corsProxy">CORS proxy (optional)</label>
+        <input type="text" id="mcpCorsProxy" placeholder="https://your-proxy.workers.dev/ or https://proxy.example.com/?url={url}" onchange="onMcpCorsProxyChange(this.value)">
+        <div style="font-size:10px;color:var(--text-dim);margin:-4px 0 8px;line-height:1.4" data-i18n="mcpModal.corsHint">Most MCP servers don't send CORS headers for browsers. If a direct connection fails with a CORS error, set a proxy URL here — it's prepended to the target URL (use {url} for query-param style). A 20-line Cloudflare Worker is enough.</div>
         <label data-i18n="mcpModal.importJsonLabel">Paste <code>mcpServers</code> JSON config</label>
         <textarea id="mcpServerJson" style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:11px" placeholder='{&#10;  "mcpServers": {&#10;    "example": {&#10;      "type": "streamable_http",&#10;      "url": "https://mcp.example.com/mcp",&#10;      "token": "optional-bearer-token"&#10;    }&#10;  }&#10;}'></textarea>
         <div style="display:flex;gap:8px;margin-top:6px">
@@ -1823,6 +1826,8 @@ const I18N = {
     'mcpModal.tabTool': 'Custom Tool',
     'mcpModal.importJsonLabel': 'Paste mcpServers JSON config',
     'mcpModal.importServer': 'Import & Connect',
+    'mcpModal.corsProxy': 'CORS proxy (optional)',
+    'mcpModal.corsHint': "Most MCP servers don't send CORS headers for browsers. If a direct connection fails with a CORS error, set a proxy URL here — it's prepended to the target URL (use {url} for query-param style). A 20-line Cloudflare Worker is enough.",
     'mcpModal.addManual': 'Or add a single server manually',
     'mcpModal.srvName': 'Name',
     'mcpModal.srvType': 'Transport',
@@ -2070,6 +2075,8 @@ const I18N = {
     'mcpModal.tabTool': '自定义工具',
     'mcpModal.importJsonLabel': '粘贴 mcpServers JSON 配置',
     'mcpModal.importServer': '导入并连接',
+    'mcpModal.corsProxy': 'CORS 代理（可选）',
+    'mcpModal.corsHint': '多数 MCP 服务器不会给浏览器返回 CORS 头。若直连报 CORS 错误，可在此填写代理 URL——会拼接到目标 URL 前（或使用 {url} 作为占位）。部署一个约 20 行代码的 Cloudflare Worker 即可。',
     'mcpModal.addManual': '或手动添加单个服务器',
     'mcpModal.srvName': '名称',
     'mcpModal.srvType': '传输',
@@ -5079,6 +5086,39 @@ try { const s = localStorage.getItem('ba_mcp_servers'); if (s) mcpServers = JSON
 const _mcpRuntime = new Map(); // serverId -> { es, pending: Map, endpoint, sessionId, protocolVersion, connected, lastError, tools }
 function _mcpRt(id) { let r = _mcpRuntime.get(id); if (!r) { r = { es: null, pending: new Map(), endpoint: null, sessionId: null, protocolVersion: null, connected: false, lastError: null, tools: [] }; _mcpRuntime.set(id, r); } return r; }
 
+// Optional CORS proxy prefix. Browsers can't fetch cross-origin MCP endpoints
+// that don't return proper CORS headers (ModelScope, most public MCP servers).
+// The proxy URL is prepended to the target URL, or substituted at `{url}` when
+// present. Common forms:
+//   https://cors.example.workers.dev/          → proxy/<full-target-url>
+//   https://cors.example.com/?url={url}        → proxy?url=<encoded-target-url>
+// A per-server `corsProxy` overrides this global default.
+let mcpCorsProxy = '';
+try { mcpCorsProxy = localStorage.getItem('ba_mcp_cors_proxy') || ''; } catch {}
+function saveMcpCorsProxy() { try { localStorage.setItem('ba_mcp_cors_proxy', mcpCorsProxy); } catch {} }
+
+function _mcpProxyWrap(server, url) {
+  const proxy = (server.corsProxy || mcpCorsProxy || '').trim();
+  if (!proxy) return url;
+  if (proxy.includes('{url}')) return proxy.replace('{url}', encodeURIComponent(url));
+  return proxy.replace(/\/+$/, '') + '/' + url;
+}
+
+function _mcpIsCorsError(e) {
+  const msg = String(e?.message || e || '');
+  return /Failed to fetch|NetworkError|CORS|preflight|cross-origin|ERR_FAILED/i.test(msg);
+}
+
+function _mcpWrapError(server, e) {
+  if (_mcpIsCorsError(e)) {
+    const hint = server.corsProxy || mcpCorsProxy
+      ? 'Request failed through the CORS proxy. Verify the proxy URL is reachable and forwards Authorization/MCP-Protocol-Version/Mcp-Session-Id headers.'
+      : 'Blocked by browser CORS policy. The MCP server did not include your origin in Access-Control-Allow-Origin. Set a CORS proxy in the MCP modal (Import tab) and retry — e.g. a Cloudflare Worker that forwards requests.';
+    return new Error(hint + ' (' + (e.message || e) + ')');
+  }
+  return e;
+}
+
 function saveMcpTools() {
   try {
     // Only persist user-defined tools. Server-sourced tools (with `serverId`)
@@ -5090,13 +5130,24 @@ function saveMcpTools() {
 function saveMcpServers() {
   try {
     // Only persist stable configuration; runtime state lives in _mcpRuntime.
-    const persist = mcpServers.map(s => ({ id: s.id, name: s.name, type: s.type, url: s.url, token: s.token, enabled: s.enabled !== false }));
+    const persist = mcpServers.map(s => ({ id: s.id, name: s.name, type: s.type, url: s.url, token: s.token, corsProxy: s.corsProxy || '', enabled: s.enabled !== false }));
     localStorage.setItem('ba_mcp_servers', JSON.stringify(persist));
   } catch {}
 }
 
-function openMcpToolModal() { document.getElementById('mcpToolModal').classList.add('show'); renderMcpToolList(); renderMcpServerList(); }
+function openMcpToolModal() {
+  document.getElementById('mcpToolModal').classList.add('show');
+  const proxyInput = document.getElementById('mcpCorsProxy');
+  if (proxyInput) proxyInput.value = mcpCorsProxy || '';
+  renderMcpToolList();
+  renderMcpServerList();
+}
 function closeMcpToolModal() { document.getElementById('mcpToolModal').classList.remove('show'); }
+
+function onMcpCorsProxyChange(v) {
+  mcpCorsProxy = (v || '').trim();
+  saveMcpCorsProxy();
+}
 
 function switchMcpTab(which) {
   document.querySelectorAll('.mcp-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.mcpTab === which));
@@ -5127,7 +5178,13 @@ async function _mcpStreamableRequest(server, body) {
     ..._mcpAuthHeaders(server)
   };
   if (rt.sessionId) headers['Mcp-Session-Id'] = rt.sessionId;
-  const resp = await fetch(server.url, { method: 'POST', headers, body: JSON.stringify(body), mode: 'cors' });
+  const endpoint = _mcpProxyWrap(server, server.url);
+  let resp;
+  try {
+    resp = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), mode: 'cors' });
+  } catch (e) {
+    throw _mcpWrapError(server, e);
+  }
   const newSession = resp.headers.get('mcp-session-id') || resp.headers.get('Mcp-Session-Id');
   if (newSession) rt.sessionId = newSession;
   if (resp.status === 202) return null; // accepted (notification)
@@ -5180,13 +5237,13 @@ async function _mcpSseInit(server) {
   const rt = _mcpRt(server.id);
   if (rt.es && rt.endpoint) return;
   if (rt.es) { try { rt.es.close(); } catch {} rt.es = null; }
-  let url = server.url;
+  let url = _mcpProxyWrap(server, server.url);
   if (server.token) { const sep = url.includes('?') ? '&' : '?'; url += sep + 'access_token=' + encodeURIComponent(server.token); }
   return new Promise((resolve, reject) => {
     const es = new EventSource(url);
     rt.es = es;
     let settled = false;
-    const timeout = setTimeout(() => { if (!settled) { settled = true; try { es.close(); } catch {} rt.es = null; reject(new Error('SSE connect timeout')); } }, 15000);
+    const timeout = setTimeout(() => { if (!settled) { settled = true; try { es.close(); } catch {} rt.es = null; reject(_mcpWrapError(server, new Error('SSE connect timeout'))); } }, 15000);
     const onEndpoint = (e) => {
       if (settled) return;
       clearTimeout(timeout); settled = true;
@@ -5206,7 +5263,7 @@ async function _mcpSseInit(server) {
     es.addEventListener('endpoint', onEndpoint);
     es.addEventListener('message', onMessage);
     es.addEventListener('error', () => {
-      if (!settled) { clearTimeout(timeout); settled = true; try { es.close(); } catch {} rt.es = null; reject(new Error('SSE connection error (CORS or network)')); }
+      if (!settled) { clearTimeout(timeout); settled = true; try { es.close(); } catch {} rt.es = null; reject(_mcpWrapError(server, new Error('SSE connection error'))); }
     });
   });
 }
@@ -5223,7 +5280,14 @@ async function _mcpSsePost(server, body) {
       rt.pending.set(body.id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
     });
   }
-  const resp = await fetch(rt.endpoint, { method: 'POST', headers, body: JSON.stringify(body), mode: 'cors' });
+  const postTarget = _mcpProxyWrap(server, rt.endpoint);
+  let resp;
+  try {
+    resp = await fetch(postTarget, { method: 'POST', headers, body: JSON.stringify(body), mode: 'cors' });
+  } catch (e) {
+    if (pending && rt.pending.has(body.id)) rt.pending.delete(body.id);
+    throw _mcpWrapError(server, e);
+  }
   if (!resp.ok) {
     if (pending && rt.pending.has(body.id)) rt.pending.delete(body.id);
     throw new Error(`HTTP ${resp.status} posting to SSE endpoint`);
@@ -5335,17 +5399,21 @@ async function mcpImportFromJson(jsonStr) {
   try { config = JSON.parse(jsonStr); } catch (e) { throw new Error('Invalid JSON: ' + e.message); }
   const map = config.mcpServers || config.servers || config;
   if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error('Expected object with "mcpServers"');
+  // Top-level corsProxy applies to all imported servers unless overridden.
+  const globalProxy = config.corsProxy || '';
   const added = [];
   for (const [name, cfg] of Object.entries(map)) {
     if (!cfg || typeof cfg !== 'object') continue;
+    if (name === 'corsProxy' || name === 'mcpServers') continue;
     const type = _mcpNormalizeType(cfg.type || cfg.transport);
     if (!type) { console.warn('MCP import: unsupported transport for', name, cfg.type); continue; }
     if (!cfg.url || typeof cfg.url !== 'string') { console.warn('MCP import: missing url for', name); continue; }
     const token = _mcpExtractToken(cfg);
+    const corsProxy = cfg.corsProxy || cfg.cors_proxy || globalProxy || '';
     // Replace any existing server with the same name.
     const existing = mcpServers.find(s => s.name === name);
     if (existing) { await mcpDisconnectServer(existing); mcpServers = mcpServers.filter(s => s.id !== existing.id); _mcpRuntime.delete(existing.id); }
-    const server = { id: _mcpGenServerId(), name, type, url: cfg.url, token, enabled: true };
+    const server = { id: _mcpGenServerId(), name, type, url: cfg.url, token, corsProxy, enabled: true };
     mcpServers.push(server);
     added.push(server);
   }
