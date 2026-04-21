@@ -21,7 +21,7 @@
 
 ---
 
-打开一个 HTML 文件，即可获得一个可联网、可编程、可扩展的完整 AI 智能体——多轮对话、工具调用、Python 沙箱、网页检索、技能系统、记忆压缩、文件操作、云端同步，全部在一张页面中运行。
+打开一个 HTML 文件，即可获得一个可联网、可编程、可扩展的完整 AI 智能体——多轮对话、工具调用、Python 沙箱、网页检索、技能系统、上下文压缩、长期记忆、文件操作、云端同步，全部在一张页面中运行。
 
 > 没有后端，没有 npm install，没有 Docker。一张 `.html`，自带整个宇宙。
 
@@ -41,6 +41,7 @@
 | 多 LLM 供应商 | Anthropic / OpenAI / DeepSeek，可自定义 Endpoint；密钥由 Service Worker 安全注入 |
 | 推理程度控制 | 顶栏内联选择器，支持 `off / minimal / low / medium / high / xhigh` 六档 |
 | 长上下文压缩 | 每模型独立 context window，接近上限时自动 LLM 摘要压缩 |
+| 长期记忆 | 可选开启，跨会话持久保留事实 / 偏好 / 事件 / 技能，自动提取 + Agent 工具调用 + 手动增删，标签与关键词检索 |
 | MCP 服务器 | 粘贴 `mcpServers` JSON 即可导入（`streamable_http` / `sse`），支持 Bearer 鉴权与 CORS 代理 |
 | Plan Mode | Agent 先只读调研，生成 Markdown 计划供审批，批准后才执行写入 |
 | TodoWrite | Agent 主动维护可视任务清单（pending / in-progress / completed） |
@@ -147,6 +148,24 @@ OnePagent 是纯静态站点，任意静态主机均可运行：
 | Cloudflare R2 | `https://<account_id>.r2.cloudflarestorage.com` | `auto` | 必须 |
 | MinIO | `https://<your-host>` | 自定义 | 必须 |
 | Backblaze B2 | `https://s3.<region>.backblazeb2.com` | 如 `us-west-002` | 必须 |
+
+---
+
+## Memory
+
+跨对话持久化的长期记忆系统，与上下文压缩（压的是当前会话窗口）完全不同——此处记录的是**跨会话可复用的事实**。
+
+> **公式**：Memory = 信息 + 时间标签 + 可搜索关系（标签）
+
+- **存储**：独立 IndexedDB（`ba_memories`），参与 Cloud Sync 增量同步
+- **默认关闭**：在 **Settings → Memory** 勾选启用；可单独关闭自动提取
+- **五种类型**：`fact` / `preference` / `event` / `skill` / `note`
+- **三种来源**：`auto`（LLM 自动提取）/ `tool`（Agent 主动调用）/ `manual`（手动添加）
+- **自动提取**：每轮助手回答后追加一次轻量级 LLM 调用，只保留真正耐用的事实，可指定专用提取模型
+- **召回策略**：按**时效 + 标签重叠 + 关键词匹配**综合排序，取 Top-N（可配置，默认 8）注入系统提示
+- **Agent 工具**：`memory_save` / `memory_search` / `memory_update` / `memory_forget`，支持 `supersedesIds` 让新记忆替代过时记忆
+- **Memory Viewer**：顶栏按钮进入，支持搜索、按类型/来源过滤、标签云、JSON 导入导出、显示已废弃记录
+- **废弃而非删除**：被 supersedes 的记录保留历史但不再召回，可在 Viewer 中查看
 
 ---
 

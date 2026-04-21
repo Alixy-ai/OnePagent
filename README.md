@@ -21,7 +21,7 @@
 
 ---
 
-Open one HTML file and you get a fully-featured, internet-aware, programmable, extensible AI agent — multi-turn chat, tool calls, Python sandbox, web search, skills, memory compaction, file operations, cloud sync — all running on a single page.
+Open one HTML file and you get a fully-featured, internet-aware, programmable, extensible AI agent — multi-turn chat, tool calls, Python sandbox, web search, skills, context compaction, long-term memory, file operations, cloud sync — all running on a single page.
 
 > No backend. No `npm install`. No Docker. Just one `.html` that carries an entire universe.
 
@@ -41,6 +41,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Multi-provider LLM | Anthropic / OpenAI / DeepSeek with custom endpoints; keys injected securely via Service Worker |
 | Reasoning levels | Inline selector with `off / minimal / low / medium / high / xhigh` tiers |
 | Long context compaction | Per-model context window with automatic LLM-driven summary compression |
+| Long-term memory | Opt-in persistent facts / preferences / events / skills across sessions — auto-extraction, agent tools, manual CRUD, tag & keyword search |
 | MCP Servers | Paste `mcpServers` JSON to import (`streamable_http` / `sse`), Bearer auth, optional CORS proxy |
 | Plan Mode | Agent investigates with read-only tools, drafts a Markdown plan for approval, then executes |
 | TodoWrite | Agent maintains a visible task list (pending / in-progress / completed) |
@@ -146,6 +147,24 @@ Setup: **Settings, Cloud Sync** — fill in Endpoint / Region / Bucket / Credent
 | Cloudflare R2 | `https://<account_id>.r2.cloudflarestorage.com` | `auto` | required |
 | MinIO | `https://<your-host>` | custom | required |
 | Backblaze B2 | `https://s3.<region>.backblazeb2.com` | e.g. `us-west-002` | required |
+
+---
+
+## Memory
+
+Long-term memory persists across conversations — distinct from context compaction (which compresses the current chat window). This layer stores **reusable facts that survive across sessions**.
+
+> **Formula**: Memory = Information + Time Label + Searchable Relationships (tags)
+
+- **Storage**: dedicated IndexedDB (`ba_memories`), included in Cloud Sync incremental push
+- **Off by default**: enable at **Settings → Memory**; auto-extraction can be toggled independently
+- **Five types**: `fact` / `preference` / `event` / `skill` / `note`
+- **Three sources**: `auto` (LLM-extracted) / `tool` (agent-called) / `manual` (user-added)
+- **Auto-extraction**: one lightweight LLM pass after each assistant turn keeps only durable facts; dedicated extraction model supported
+- **Recall**: ranked by **recency + tag overlap + keyword match**, Top-N (configurable, default 8) injected into the system prompt
+- **Agent tools**: `memory_save` / `memory_search` / `memory_update` / `memory_forget`, with `supersedesIds` so new memories retire outdated ones
+- **Memory Viewer**: opens from the top bar — search, filter by type / source, tag chips, JSON import & export, show retired records
+- **Retire, don't delete**: superseded records are kept for history and simply excluded from recall
 
 ---
 
