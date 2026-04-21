@@ -7784,7 +7784,7 @@ function renderToolsGrid() {
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
     const enabled = !disabledTools.has(t.name);
-    return `<div class="tg-card ${enabled ? 'enabled' : ''}" data-tool="${esc(t.name)}" title="${esc(t.description)}" onclick="toggleToolEnabled('${esc(t.name)}')" style="${enabled ? '' : 'opacity:0.4'}"><div class="tg-badge"></div><div class="tg-icon">${ic}</div><div class="tg-name">${esc(t.name)}</div></div>`;
+    return `<div class="tg-card ${enabled ? 'enabled' : ''}" data-tool="${esc(t.name)}" title="${esc(t.description)}" onclick="toggleToolEnabled('${esc(t.name)}')" style="${enabled ? '' : 'opacity:0.4'}"><div class="tg-badge"></div><div class="tg-icon">${iconHtml(ic)}</div><div class="tg-name">${esc(t.name)}</div></div>`;
   }).join('');
 }
 
@@ -8137,7 +8137,7 @@ function renderFileTree() {
         if (open) walk(ch, fp, d + 1);
       } else {
         const act = currentViewFile === fp ? ' active' : '';
-        items.push(`<div class="fe-item indent-${indent}${act}${sel}" data-path="${esc(fp)}" onclick="openFileViewer('${esc(fp)}')" oncontextmenu="feCtx(event,'${esc(fp)}','file')" draggable="true" ondragstart="feStartDrag(event,'${esc(fp)}')">${checkbox}<span class="arrow"></span><span class="icon">${getFileIcon(nm)}</span><span class="name">${esc(nm)}</span></div>`);
+        items.push(`<div class="fe-item indent-${indent}${act}${sel}" data-path="${esc(fp)}" onclick="openFileViewer('${esc(fp)}')" oncontextmenu="feCtx(event,'${esc(fp)}','file')" draggable="true" ondragstart="feStartDrag(event,'${esc(fp)}')">${checkbox}<span class="arrow"></span><span class="icon">${iconHtml(getFileIcon(nm))}</span><span class="name">${esc(nm)}</span></div>`);
       }
     }
   })(vfs, '', 0);
@@ -9833,7 +9833,7 @@ function renderChips() {
   const el = document.getElementById('inputChips');
   let html = '';
   html += invokedSkills.map(s =>
-    `<div class="input-chip" style="border-color:var(--accent-yellow);color:var(--accent-yellow)" title="Skill: ${esc(s.name)}"><span class="chip-name">${s.icon || 'i:bolt'} /${esc(s.name)}</span><button class="chip-close" onclick="removeInvokedSkill('${esc(s.id)}')">&times;</button></div>`
+    `<div class="input-chip" style="border-color:var(--accent-yellow);color:var(--accent-yellow)" title="Skill: ${esc(s.name)}"><span class="chip-name"><span style="display:inline-flex;align-items:center;gap:6px">${iconHtml(s.icon || 'i:bolt')}<span>/${esc(s.name)}</span></span></span><button class="chip-close" onclick="removeInvokedSkill('${esc(s.id)}')">&times;</button></div>`
   ).join('');
   html += attachedFiles.map(fp => {
     const name = fp.split('/').pop();
