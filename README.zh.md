@@ -197,6 +197,12 @@ OnePagent 是纯静态站点，任意静态主机均可运行：
 
 ---
 
+## 友链
+
+- [Linux Do](https://linux.do/) — 新的理想型社区
+
+---
+
 ## License
 
 MIT (c) OnePagent contributors

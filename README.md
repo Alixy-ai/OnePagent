@@ -196,6 +196,12 @@ Single-file project — fork it, edit it, send a PR.
 
 ---
 
+## Friends
+
+- [Linux Do](https://linux.do/) — A community for developers, by developers.
+
+---
+
 ## License
 
 MIT (c) OnePagent contributors
