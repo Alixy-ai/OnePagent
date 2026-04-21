@@ -9915,22 +9915,58 @@ function detectFormat(t) {
   if (/<\/body>/i.test(stripped) && /<\/html>/i.test(stripped)) return 'html';
   return 'markdown';
 }
+
+function normalizeTextForDisplay(text) {
+  let t = String(text ?? '');
+  // Fast path
+  if (t.indexOf('&') === -1 && t.indexOf('\\u') === -1) return t;
+
+  // Decode only a safe subset of entities/escapes (quotes) OUTSIDE code fences.
+  // We intentionally avoid decoding &lt; / &gt; to prevent turning harmless text into HTML.
+  const decodeSegment = (seg) => seg
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/&apos;|&#39;/g, "'")
+    .replace(/&ldquo;|&#8220;/g, '\u201c')
+    .replace(/&rdquo;|&#8221;/g, '\u201d')
+    .replace(/&lsquo;|&#8216;/g, '\u2018')
+    .replace(/&rsquo;|&#8217;/g, '\u2019')
+    // Turn literal escape sequences into real characters (common when LLM outputs \uXXXX)
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => {
+      try { return String.fromCharCode(parseInt(hex, 16)); } catch { return _; }
+    });
+
+  // Split by fenced code blocks: keep fences untouched.
+  // This is conservative and cheap; inline code (`...`) is left as-is.
+  const parts = t.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    if (part.startsWith('```') || part.startsWith('~~~')) continue;
+    parts[i] = decodeSegment(part);
+  }
+  return parts.join('');
+}
+
 function renderMd(el, t) {
   el.dataset.raw = t;
   const fmt = detectFormat(t);
+  const displayText = normalizeTextForDisplay(t);
   el.dataset.fmt = fmt;
   const msgEl = el.closest('.msg-assistant');
-  try {
-    if (fmt === 'html') {
-      _renderHtmlFrame(el, t);
-      if (msgEl) { const fb = msgEl.querySelector('[data-role="fmt"]'); if (fb) { fb.style.display = ''; } }
-    } else if (typeof ptParseBlocks === 'function' && typeof ptLayout === 'function' && typeof ptRender === 'function') {
-      // Pretext-based rendering: parse markdown → measure via canvas → flow DOM
-      const blocks = ptParseBlocks(t);
-      // Compute target layout width from the chat container, not from el.clientWidth —
-      // newly-created assistant bubbles use `width: fit-content` and would otherwise
-      // lock into a narrow column during streaming (especially for CJK text with no
-      // break opportunities).
+
+  if (fmt === 'html') {
+    _renderHtmlFrame(el, t);
+    if (msgEl) { const fb = msgEl.querySelector('[data-role="fmt"]'); if (fb) { fb.style.display = ''; } }
+    el.appendChild(Object.assign(document.createElement('span'), { className: 'streaming-cursor' }));
+    return;
+  }
+
+  // Prefer Pretext renderer; if it fails, fall back to marked; only then fall back to plain text.
+  let rendered = false;
+
+  if (typeof ptParseBlocks === 'function' && typeof ptLayout === 'function' && typeof ptRender === 'function') {
+    try {
+      const blocks = ptParseBlocks(displayText);
       const chat = el.closest('.chat-messages');
       const bodyPad = 28; // .msg-body horizontal padding (10+14)*2 ~ 28
       const containerPad = 28; // .chat-messages padding
@@ -9938,16 +9974,25 @@ function renderMd(el, t) {
       const w = Math.max(320, Math.min(820 - bodyPad, avail || 600));
       const { layouts } = ptLayout(blocks, w);
       ptRender(el, layouts);
-    } else {
-      // Fallback: marked.parse + innerHTML
-      el.innerHTML = marked.parse(t, { breaks: true, gfm: true });
-      el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+      rendered = true;
+    } catch (e) {
+      console.warn('renderMd pretext failed; falling back to marked:', e);
     }
-  } catch (e) {
-    console.warn('renderMd error:', e);
-    // Safety fallback: render as plain text (do NOT HTML-escape; otherwise users see &quot; etc.)
-    el.textContent = t;
   }
+
+  if (!rendered) {
+    try {
+      el.innerHTML = marked.parse(displayText, { breaks: true, gfm: true });
+      try { el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b)); } catch {}
+      rendered = true;
+    } catch (e) {
+      console.warn('renderMd marked failed; falling back to plain text:', e);
+      el.textContent = displayText;
+      el.style.whiteSpace = 'pre-wrap';
+      rendered = true;
+    }
+  }
+
   el.appendChild(Object.assign(document.createElement('span'), { className: 'streaming-cursor' }));
 }
 function _renderHtmlFrame(el, html) {
