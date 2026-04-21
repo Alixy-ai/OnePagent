@@ -547,6 +547,25 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .skill-install-btn { flex: 1; padding: 5px 4px; border: 1px dashed var(--border); border-radius: 4px; background: transparent; color: var(--text-dim); font-size: 10px; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; text-align: center; }
 .skill-install-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 
+/* Model-context list (Settings modal) */
+.mc-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; margin-bottom: 6px; padding: 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-root); }
+.mc-list:empty { display: none; }
+.mc-empty { font-size: 10px; color: var(--text-dim); padding: 10px; text-align: center; border: 1px dashed var(--border); border-radius: 5px; margin-bottom: 6px; background: var(--bg-root); }
+.mc-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; background: var(--bg-panel); border: 1px solid var(--border); transition: border-color 0.15s; }
+.mc-row:hover { border-color: var(--border-active); }
+.mc-row .mc-model { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-row .mc-value { width: 96px; flex-shrink: 0; padding: 4px 6px !important; margin: 0 !important; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-align: right; }
+.mc-row .mc-presets { display: flex; gap: 2px; flex-shrink: 0; }
+.mc-preset-btn { padding: 2px 6px; font-size: 9px; font-family: 'JetBrains Mono', monospace; background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; transition: all 0.15s; }
+.mc-preset-btn:hover { color: var(--accent-orange); border-color: var(--accent-orange); }
+.mc-preset-btn.is-active { color: var(--accent-orange); border-color: var(--accent-orange); background: rgba(255,107,53,0.08); }
+.mc-remove { padding: 0 6px; font-size: 14px; line-height: 1; background: transparent; color: var(--text-dim); border: none; cursor: pointer; border-radius: 3px; flex-shrink: 0; }
+.mc-remove:hover { color: var(--accent-red); background: rgba(255,68,102,0.1); }
+.mc-add-row { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+.mc-add-row > input { margin: 0 !important; padding: 6px 8px !important; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+.mc-add-row > input[type=text] { flex: 1; min-width: 0; }
+.mc-add-row > input[type=number] { width: 110px; flex-shrink: 0; text-align: right; }
+
 /* File explorer */
 .fe-tree { font-size: 12px; overflow-y: auto; min-height: 140px; max-height: 360px; }
 .fe-item { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: pointer; transition: background 0.1s; white-space: nowrap; overflow: hidden; position: relative; }
@@ -1520,8 +1539,18 @@ document.addEventListener('DOMContentLoaded', function() {
       <textarea id="setModels" placeholder="claude-sonnet-4-20250514&#10;claude-opus-4-20250514" style="min-height:80px"></textarea>
       <label><span data-i18n="settings.defaultModel">Default Model</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.defaultModelHint">(optional; first model used if empty)</span></label>
       <input type="text" id="setDefaultModel" placeholder="claude-sonnet-4-20250514">
-      <label><span data-i18n="settings.contextLengths">Model Context Lengths</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.contextLengthsHint">(model=tokens per line)</span></label>
-      <textarea id="setModelContexts" placeholder="claude-sonnet-4-20250514=200000&#10;gpt-4o=128000" style="min-height:60px"></textarea>
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        <span><span data-i18n="settings.contextLengths">Model Context Lengths</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.contextLengthsHint">(tokens per model)</span></span>
+        <button type="button" class="modal-btn secondary" onclick="syncModelContextsFromSelected()" style="padding:2px 10px;font-size:10px">&#x21A1; <span data-i18n="settings.mcImport">Import Selected</span></button>
+      </label>
+      <div id="setModelContextsList" class="mc-list"></div>
+      <div id="setModelContextsEmpty" class="mc-empty" data-i18n="settings.mcEmpty">No per-model limits set. Click &quot;Import Selected&quot; or add a row below.</div>
+      <div class="mc-add-row">
+        <input type="text" id="setMcNewModel" placeholder="model id" data-i18n-placeholder="settings.mcModelPh" list="setMcModelList" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('setMcNewValue').focus();}">
+        <datalist id="setMcModelList"></datalist>
+        <input type="number" id="setMcNewValue" placeholder="200000" min="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addModelContextFromInputs();}">
+        <button type="button" class="modal-btn secondary" onclick="addModelContextFromInputs()" style="padding:4px 10px;font-size:10px"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="settings.addModel">Add</span></button>
+      </div>
       <label><span data-i18n="settings.tavilyKey">Tavily API Key</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.tavilyKeyHint">(for Web Search)</span></label>
       <input type="password" id="setTavilyKey" placeholder="tvly-...">
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
@@ -1868,7 +1897,10 @@ const I18N = {
     'settings.defaultModel': 'Default Model',
     'settings.defaultModelHint': '(optional; first model used if empty)',
     'settings.contextLengths': 'Model Context Lengths',
-    'settings.contextLengthsHint': '(model=tokens per line)',
+    'settings.contextLengthsHint': '(tokens per model)',
+    'settings.mcImport': 'Import Selected',
+    'settings.mcEmpty': 'No per-model limits set. Click "Import Selected" or add a row below.',
+    'settings.mcModelPh': 'model id',
     'settings.tavilyKey': 'Tavily API Key',
     'settings.tavilyKeyHint': '(for Web Search)',
     'settings.memHeader': 'Memory',
@@ -2129,7 +2161,10 @@ const I18N = {
     'settings.defaultModel': '默认模型',
     'settings.defaultModelHint': '（可选；留空则使用首个模型）',
     'settings.contextLengths': '模型上下文长度',
-    'settings.contextLengthsHint': '（每行 "模型=令牌数"）',
+    'settings.contextLengthsHint': '（每个模型的 Token 数）',
+    'settings.mcImport': '导入已选模型',
+    'settings.mcEmpty': '尚未设置模型上下文长度。点击"导入已选模型"或在下方添加一行。',
+    'settings.mcModelPh': '模型 ID',
     'settings.tavilyKey': 'Tavily API Key',
     'settings.tavilyKeyHint': '（用于网页搜索）',
     'settings.memHeader': '记忆',
@@ -5762,7 +5797,7 @@ function _applyProviderProfileToSettingsModal(p) {
   document.getElementById('setModels').value = models.join('\n');
   document.getElementById('setDefaultModel').value = p.defaultModel || '';
   const ctxs = p.model_contexts || {};
-  document.getElementById('setModelContexts').value = Object.entries(ctxs).map(([k, v]) => `${k}=${v}`).join('\n');
+  renderModelContextsList(ctxs);
 }
 
 function onProviderProfileSelect() {
@@ -5809,6 +5844,7 @@ function deleteCurrentProviderProfile() {
   ACTIVE_PROVIDER = next ? providers[next] : null;
   renderProviderProfilesInSettings();
   if (ACTIVE_PROVIDER) _applyProviderProfileToSettingsModal(ACTIVE_PROVIDER);
+  else renderModelContextsList({});
   renderProviderSelectInTopBar();
 }
 
@@ -5816,6 +5852,7 @@ function openSettingsModal() {
   // Load active provider profile into the settings modal
   const p = getActiveProviderProfile();
   renderProviderProfilesInSettings();
+  renderModelContextsList({}); // reset; overridden below if a profile is active
   if (p) {
     document.getElementById('setProviderProfile').value = p.id;
     _applyProviderProfileToSettingsModal(p);
@@ -5923,6 +5960,7 @@ function getCurrentSelectedModels() {
 function setSelectedModels(list) {
   const uniq = Array.from(new Set(list.filter(Boolean)));
   document.getElementById('setModels').value = uniq.join('\n');
+  _mcUpdateModelDatalist();
 }
 function addSelectedModelsToList() {
   const sel = document.getElementById('setAvailableModels');
@@ -5949,6 +5987,125 @@ function parseModelContexts(raw) {
   return out;
 }
 
+// Model-context list UI (Settings modal)
+const _MC_PRESETS = [
+  { label: '32K', value: 32000 },
+  { label: '128K', value: 128000 },
+  { label: '200K', value: 200000 },
+  { label: '1M', value: 1000000 }
+];
+
+function _mcEsc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function _mcSyncPresetActive(row) {
+  const v = parseInt(row.querySelector('.mc-value').value, 10);
+  row.querySelectorAll('.mc-preset-btn').forEach(btn => {
+    btn.classList.toggle('is-active', parseInt(btn.dataset.v, 10) === v);
+  });
+}
+
+function _mcBuildRow(model, value) {
+  const row = document.createElement('div');
+  row.className = 'mc-row';
+  row.dataset.model = model;
+  const valAttr = Number.isFinite(value) && value > 0 ? ' value="' + value + '"' : '';
+  row.innerHTML =
+    '<span class="mc-model" title="' + _mcEsc(model) + '">' + _mcEsc(model) + '</span>' +
+    '<input type="number" class="mc-value" min="1" placeholder="tokens"' + valAttr + '>' +
+    '<div class="mc-presets">' + _MC_PRESETS.map(p => '<button type="button" class="mc-preset-btn" data-v="' + p.value + '">' + p.label + '</button>').join('') + '</div>' +
+    '<button type="button" class="mc-remove" title="Remove" aria-label="Remove">&times;</button>';
+  const input = row.querySelector('.mc-value');
+  row.querySelectorAll('.mc-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => { input.value = btn.dataset.v; _mcSyncPresetActive(row); });
+  });
+  input.addEventListener('input', () => _mcSyncPresetActive(row));
+  row.querySelector('.mc-remove').addEventListener('click', () => {
+    row.remove();
+    _mcUpdateEmptyState();
+    _mcUpdateModelDatalist();
+  });
+  _mcSyncPresetActive(row);
+  return row;
+}
+
+function _mcUpdateEmptyState() {
+  const list = document.getElementById('setModelContextsList');
+  const empty = document.getElementById('setModelContextsEmpty');
+  if (!list || !empty) return;
+  const hasRows = list.children.length > 0;
+  empty.style.display = hasRows ? 'none' : 'block';
+  list.style.display = hasRows ? '' : 'none';
+}
+
+function _mcUpdateModelDatalist() {
+  const dl = document.getElementById('setMcModelList');
+  if (!dl) return;
+  const selected = getCurrentSelectedModels();
+  const have = new Set(Array.from(document.querySelectorAll('#setModelContextsList .mc-row')).map(r => r.dataset.model));
+  dl.innerHTML = selected.filter(m => !have.has(m)).map(m => '<option value="' + _mcEsc(m) + '"></option>').join('');
+}
+
+function renderModelContextsList(contexts) {
+  const list = document.getElementById('setModelContextsList');
+  if (!list) return;
+  list.innerHTML = '';
+  Object.entries(contexts || {}).forEach(([model, value]) => {
+    list.appendChild(_mcBuildRow(model, parseInt(value, 10)));
+  });
+  _mcUpdateEmptyState();
+  _mcUpdateModelDatalist();
+}
+
+function readModelContextsFromUI() {
+  const out = {};
+  document.querySelectorAll('#setModelContextsList .mc-row').forEach(row => {
+    const model = row.dataset.model;
+    const value = parseInt(row.querySelector('.mc-value').value, 10);
+    if (model && Number.isFinite(value) && value > 0) out[model] = value;
+  });
+  return out;
+}
+
+function addModelContextFromInputs() {
+  const mi = document.getElementById('setMcNewModel');
+  const vi = document.getElementById('setMcNewValue');
+  const status = document.getElementById('setStatus');
+  const model = (mi.value || '').trim();
+  const value = parseInt(vi.value, 10);
+  if (!model) { status.textContent = 'Enter a model id'; mi.focus(); return; }
+  if (!Number.isFinite(value) || value <= 0) { status.textContent = 'Enter a positive token count'; vi.focus(); return; }
+  const list = document.getElementById('setModelContextsList');
+  const existing = Array.from(list.querySelectorAll('.mc-row')).find(r => r.dataset.model === model);
+  if (existing) {
+    existing.querySelector('.mc-value').value = value;
+    _mcSyncPresetActive(existing);
+    existing.scrollIntoView({ block: 'nearest' });
+  } else {
+    list.appendChild(_mcBuildRow(model, value));
+  }
+  mi.value = '';
+  vi.value = '';
+  status.textContent = existing ? ('Updated "' + model + '"') : ('Added "' + model + '"');
+  _mcUpdateEmptyState();
+  _mcUpdateModelDatalist();
+  mi.focus();
+}
+
+function syncModelContextsFromSelected() {
+  const selected = getCurrentSelectedModels();
+  const status = document.getElementById('setStatus');
+  if (!selected.length) { status.textContent = 'No selected models to import'; return; }
+  const list = document.getElementById('setModelContextsList');
+  const have = new Set(Array.from(list.querySelectorAll('.mc-row')).map(r => r.dataset.model));
+  let added = 0;
+  selected.forEach(m => { if (!have.has(m)) { list.appendChild(_mcBuildRow(m, NaN)); added++; } });
+  status.textContent = added ? ('Added ' + added + ' model row(s) — set a value for each') : 'All selected models already listed';
+  _mcUpdateEmptyState();
+  _mcUpdateModelDatalist();
+}
+
 async function saveSettings() {
   // Save provider profile
   const profId = document.getElementById('setProviderProfile').value || _genProviderId();
@@ -5958,7 +6115,7 @@ async function saveSettings() {
   const apiKey = document.getElementById('setApiKey').value.trim();
   const models = document.getElementById('setModels').value.split(/[\n,]/).map(m => m.trim()).filter(Boolean);
   const defaultModel = document.getElementById('setDefaultModel').value.trim();
-  const model_contexts = parseModelContexts(document.getElementById('setModelContexts').value);
+  const model_contexts = readModelContextsFromUI();
 
   const providers = getProvidersMap();
   providers[profId] = { id: profId, name, type, endpoint, apiKey, models, defaultModel: defaultModel || models[0] || '', model_contexts };

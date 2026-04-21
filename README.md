@@ -29,7 +29,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 
 ## Preview
 
-![OnePagent preview](https://jsd.onmicrosoft.cn/gh/mydracula/image@master/20260420/a39edec6a21d430bbb37985130567777.png)
+![OnePagent preview](https://jsd.onmicrosoft.cn/gh/mydracula/image@master/20260421/188f31edc79848ff9ed581bc3b5339ff.png)
 
 ---
 
