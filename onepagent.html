@@ -7111,6 +7111,7 @@ function schedulePush() {
 function togglePlanMode() {
   planMode = !planMode;
   renderPlanButton();
+  rebuildToolDefs();
   appendSystemMsg(planMode
     ? 'Plan Mode ON — write tools blocked. The agent should explore, then call ExitPlanMode with a plan for your approval.'
     : 'Plan Mode OFF — all tools available.');
@@ -8140,7 +8141,11 @@ function getEnabledToolsAnthropic() { return allToolsAnthropic.filter(t => !disa
 function getEnabledToolsOpenAI() { return allToolsOpenAI.filter(t => !disabledTools.has(t.function.name)); }
 
 function rebuildToolDefs(headId = activeEntryId) {
-  allToolsAnthropic = [...BASE_TOOLS_ANTHROPIC];
+  allToolsAnthropic = BASE_TOOLS_ANTHROPIC.filter(t => {
+    // TodoWrite and ExitPlanMode are plan-mode-only tools
+    if (t.name === 'TodoWrite' || t.name === 'ExitPlanMode') return planMode;
+    return true;
+  });
   skillToolHandlers = {};
   for (const st of getAllSkillTools()) {
     if (st.handler) skillToolHandlers[st.name] = st.handler;
