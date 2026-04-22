@@ -582,7 +582,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .fe-item .fe-check { flex-shrink: 0; width: 12px; height: 12px; margin: 0; cursor: pointer; opacity: 0; transition: opacity 0.12s; accent-color: var(--accent-blue); }
 .fe-item.indent-1 .fe-check { margin-left: 0; }
 .fe-item.indent-1{padding-left:20px}.fe-item.indent-2{padding-left:32px}.fe-item.indent-3{padding-left:44px}.fe-item.indent-4{padding-left:56px}.fe-item.indent-5{padding-left:68px}
-.fe-select-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); background: var(--bg-card); font-size: 11px; }
+.fe-select-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); background: var(--bg-card); font-size: 11px; position: sticky; bottom: 0; z-index: 5; flex-shrink: 0; }
 .fe-select-bar .fe-select-count { flex: 1; color: var(--accent-blue); font-weight: 600; }
 /* Context menu */
 .fe-ctx { position: fixed; z-index: 300; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; min-width: 140px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
@@ -1249,6 +1249,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="fe-tree" id="fileTree"></div>
         <div class="fe-select-bar" id="feSelectBar" style="display:none">
           <span class="fe-select-count"><span id="feSelectCount">0</span> <span data-i18n="fe.selected">selected</span></span>
+          <button class="skill-install-btn" onclick="feDeleteSelected()" title="Delete selected" data-i18n-title="fe.deleteSelectedTitle" style="color:var(--accent-red)"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
           <button class="skill-install-btn" onclick="feDownloadSelectedZip()" title="Download selected as .zip" data-i18n-title="fe.downloadZipTitle">&#x2B07; <span data-i18n="fe.downloadZip">ZIP</span></button>
           <button class="skill-install-btn" onclick="feClearSelection()" title="Clear selection" data-i18n-title="fe.clearSelection"><svg class="ui-icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
         </div>
@@ -1827,6 +1828,8 @@ const I18N = {
     'fe.downloadZip': 'ZIP',
     'fe.downloadZipTitle': 'Download selected as .zip',
     'fe.clearSelection': 'Clear selection',
+    'fe.deleteSelectedTitle': 'Delete selected',
+    'fe.deleteSelectedConfirm': 'Delete {n} selected item(s)?',
     'fe.zipEmpty': 'Select files or folders first.',
     'fe.zipBuilding': 'Building .zip\u2026',
     'fe.zipFailed': 'Failed to build .zip:',
@@ -2086,6 +2089,8 @@ const I18N = {
     'fe.downloadZip': '下载',
     'fe.downloadZipTitle': '将所选打包为 .zip 下载',
     'fe.clearSelection': '清除选择',
+    'fe.deleteSelectedTitle': '删除所选',
+    'fe.deleteSelectedConfirm': '确定删除 {n} 个所选项目？',
     'fe.zipEmpty': '请先选择文件或文件夹。',
     'fe.zipBuilding': '正在打包 .zip\u2026',
     'fe.zipFailed': '打包 .zip 失败：',
@@ -8553,6 +8558,14 @@ function feToggleSelect(ev, path) {
   renderFileTree();
 }
 function feClearSelection() { feSelected.clear(); renderFileTree(); }
+function feDeleteSelected() {
+  if (!feSelected.size) return;
+  if (!confirm(t('fe.deleteSelectedConfirm') !== 'fe.deleteSelectedConfirm' ? t('fe.deleteSelectedConfirm').replace('{n}', feSelected.size) : `Delete ${feSelected.size} selected item(s)?`)) return;
+  for (const sp of [...feSelected]) { vfsDelete(sp); }
+  if (currentViewFile && !vfsResolve(currentViewFile)) closeFileViewer(true);
+  feSelected.clear();
+  renderFileTree();
+}
 function _feUpdateSelectBar() {
   const bar = document.getElementById('feSelectBar');
   const count = document.getElementById('feSelectCount');
@@ -8752,7 +8765,7 @@ function feDeleteItem(path) {
   const name = path.split('/').pop();
   if (!confirm(`Delete "${name}"?`)) return;
   vfsDelete(path);
-  if (currentViewFile === path) closeFileViewer();
+  if (currentViewFile && (currentViewFile === path || currentViewFile.startsWith(path + '/'))) closeFileViewer();
 }
 
 function feRename(path) {
