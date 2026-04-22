@@ -513,7 +513,9 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 
 /* ── Panel Sections ── */
 .panel-section { padding: 12px; border-bottom: 1px solid var(--border); }
-.left-panel > .panel-section[data-section="files"] { border-bottom: none; }
+.left-panel > .panel-section[data-section="files"] { border-bottom: none; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 220px; padding-bottom: 0; }
+.left-panel > .panel-section[data-section="files"].collapsed { flex: 0 0 auto; min-height: 0; padding-bottom: 12px; }
+.left-panel > .panel-section[data-section="files"] .section-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .panel-section.collapsed .section-body { display: none !important; }
 .panel-section.collapsed .section-title .section-arrow { transform: rotate(-90deg); }
 .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-secondary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; cursor: pointer; user-select: none; }
@@ -567,7 +569,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .mc-add-row > input[type=number] { width: 110px; flex-shrink: 0; text-align: right; }
 
 /* File explorer */
-.fe-tree { font-size: 12px; overflow-y: auto; min-height: 140px; max-height: 360px; }
+.fe-tree { font-size: 12px; overflow-y: auto; min-height: 140px; max-height: none; flex: 1 1 auto; padding-bottom: 8px; }
 .fe-item { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: pointer; transition: background 0.1s; white-space: nowrap; overflow: hidden; position: relative; }
 .fe-item:hover { background: var(--bg-hover); }
 .fe-item:hover .fe-check { opacity: 1; }
@@ -582,8 +584,10 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .fe-item .fe-check { flex-shrink: 0; width: 12px; height: 12px; margin: 0; cursor: pointer; opacity: 0; transition: opacity 0.12s; accent-color: var(--accent-blue); }
 .fe-item.indent-1 .fe-check { margin-left: 0; }
 .fe-item.indent-1{padding-left:20px}.fe-item.indent-2{padding-left:32px}.fe-item.indent-3{padding-left:44px}.fe-item.indent-4{padding-left:56px}.fe-item.indent-5{padding-left:68px}
-.fe-select-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); background: var(--bg-card); font-size: 11px; position: sticky; bottom: 0; z-index: 5; flex-shrink: 0; }
-.fe-select-bar .fe-select-count { flex: 1; color: var(--accent-blue); font-weight: 600; }
+.fe-bottom-stack { position: sticky; bottom: 0; z-index: 6; margin-top: auto; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 0; background: linear-gradient(180deg, rgba(0,0,0,0) 0%, var(--bg-panel) 28%, var(--bg-panel) 100%); }
+.fe-select-bar { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid var(--border); border-bottom: none; border-radius: 9px 9px 0 0; background: linear-gradient(135deg, rgba(91,138,245,0.1), var(--bg-card)); font-size: 11px; flex-shrink: 0; box-shadow: 0 10px 24px rgba(0,0,0,0.08); }
+.fe-select-bar .fe-select-count { flex: 1; min-width: 0; color: var(--accent-blue); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+.fe-select-bar .skill-install-btn { flex: 0 0 auto; min-width: 58px; padding: 5px 10px; background: var(--bg-panel); }
 /* Context menu */
 .fe-ctx { position: fixed; z-index: 300; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; min-width: 140px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
 .fe-ctx-item { padding: 5px 14px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--text-primary); }
@@ -592,7 +596,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .fe-ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
 /* Inline rename */
 .fe-rename { background: var(--bg-root); border: 1px solid var(--accent-blue); color: var(--text-primary); font-size: 11px; font-family: 'Inter',sans-serif; padding: 1px 4px; border-radius: 3px; outline: none; width: 100%; }
-.fe-upload-zone { margin: auto 12px 12px; padding: 6px; border: 1px dashed var(--border); border-radius: 5px; font-size: 10px; color: var(--text-dim); position: sticky; bottom: 12px; transition: all 0.2s; display: flex; align-items: center; gap: 6px; background: var(--bg-panel); z-index: 5; flex-shrink: 0; }
+.fe-upload-zone { margin: 0; padding: 8px 10px; border: 1px dashed var(--border); border-radius: 9px; font-size: 10px; color: var(--text-dim); position: relative; transition: all 0.2s; display: flex; align-items: center; gap: 8px; background: var(--bg-panel); flex-shrink: 0; }
+.fe-bottom-stack.has-selection .fe-upload-zone { border-top-style: solid; border-top-left-radius: 0; border-top-right-radius: 0; }
 .fe-upload-zone:hover { border-color: var(--accent-blue); color: var(--text-secondary); }
 .fe-upload-zone.dragover { border-color: var(--accent-green); background: rgba(0,255,136,0.03); }
 .fe-upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -1234,7 +1239,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 
     <!-- Files -->
-    <div class="panel-section" data-section="files" style="display:flex;flex-direction:column">
+    <div class="panel-section" data-section="files">
       <div class="section-title" onclick="toggleSection(this)">
         <span style="display:flex;align-items:center;gap:6px"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></span> <span data-i18n="section.files">FILES</span></span>
         <span style="display:flex;gap:2px" onclick="event.stopPropagation()">
@@ -1245,21 +1250,23 @@ document.addEventListener('DOMContentLoaded', function() {
         </span>
         <span class="section-arrow">&#x25BC;</span>
       </div>
-      <div class="section-body" style="display:flex;flex-direction:column">
+      <div class="section-body">
         <div class="fe-tree" id="fileTree"></div>
-        <div class="fe-select-bar" id="feSelectBar" style="display:none">
-          <span class="fe-select-count"><span id="feSelectCount">0</span> <span data-i18n="fe.selected">selected</span></span>
-          <button class="skill-install-btn" onclick="feDeleteSelected()" title="Delete selected" data-i18n-title="fe.deleteSelectedTitle" style="color:var(--accent-red)"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
-          <button class="skill-install-btn" onclick="feDownloadSelectedZip()" title="Download selected as .zip" data-i18n-title="fe.downloadZipTitle">&#x2B07; <span data-i18n="fe.downloadZip">ZIP</span></button>
-          <button class="skill-install-btn" onclick="feClearSelection()" title="Clear selection" data-i18n-title="fe.clearSelection"><svg class="ui-icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
-        </div>
       </div>
     </div>
-    <!-- Upload zone pinned to bottom of left panel -->
-    <div class="fe-upload-zone" id="uploadZone">
-      <input type="file" id="fileInput" multiple onchange="handleUpload(event)">
-      <span class="fe-upload-label" data-i18n="upload.drop">Drop files or click to upload</span>
-      <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()" data-i18n="upload.folder">Folder</button>
+    <!-- Files actions docked to bottom of left panel -->
+    <div class="fe-bottom-stack" id="feBottomStack">
+      <div class="fe-select-bar" id="feSelectBar" style="display:none">
+        <span class="fe-select-count"><span id="feSelectCount">0</span> <span data-i18n="fe.selected">selected</span></span>
+        <button class="skill-install-btn" onclick="feDeleteSelected()" title="Delete selected" data-i18n-title="fe.deleteSelectedTitle" style="color:var(--accent-red)"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+        <button class="skill-install-btn" onclick="feDownloadSelectedZip()" title="Download selected as .zip" data-i18n-title="fe.downloadZipTitle">&#x2B07; <span data-i18n="fe.downloadZip">ZIP</span></button>
+        <button class="skill-install-btn" onclick="feClearSelection()" title="Clear selection" data-i18n-title="fe.clearSelection"><svg class="ui-icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+      </div>
+      <div class="fe-upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" multiple onchange="handleUpload(event)">
+        <span class="fe-upload-label" data-i18n="upload.drop">Drop files or click to upload</span>
+        <button class="skill-install-btn fe-upload-folder-btn" onclick="event.stopPropagation();document.getElementById('folderInput').click()" data-i18n="upload.folder">Folder</button>
+      </div>
     </div>
     <input type="file" id="folderInput" webkitdirectory directory multiple onchange="handleFolderUpload(event)" style="display:none">
   </div>
@@ -8569,8 +8576,11 @@ function feDeleteSelected() {
 function _feUpdateSelectBar() {
   const bar = document.getElementById('feSelectBar');
   const count = document.getElementById('feSelectCount');
+  const dock = document.getElementById('feBottomStack');
   if (!bar || !count) return;
-  bar.style.display = feSelected.size ? '' : 'none';
+  const hasSelection = feSelected.size > 0;
+  bar.style.display = hasSelection ? '' : 'none';
+  dock?.classList.toggle('has-selection', hasSelection);
   count.textContent = String(feSelected.size);
 }
 async function feDownloadSelectedZip() {
