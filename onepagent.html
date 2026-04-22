@@ -3624,6 +3624,8 @@ function clearConversation() {
   totalTokens = 0;
   contextTokens = 0;
   chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation cleared. Type a task to begin.</div></div>';
+  todos = [];
+  if (typeof renderTodos === 'function') renderTodos();
   updateMemoryUI();
   document.getElementById('memoryLog').innerHTML = '';
   saveCurrentConv(true);
