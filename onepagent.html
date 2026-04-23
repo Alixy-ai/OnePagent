@@ -8523,6 +8523,10 @@ function shellTokenize(cmd) { const tk = []; let cur = '', sq = false, dq = fals
 const collapsedDirs = new Set();
 const seenDirs = new Set();
 
+function shouldDefaultCollapseDir(path) {
+  return normPath(path) === '/skills';
+}
+
 function renderFileTree() {
   const el = document.getElementById('fileTree');
   // Drop stale selections whose path no longer resolves.
@@ -8537,9 +8541,13 @@ function renderFileTree() {
       const checkedAttr = feSelected.has(fp) ? ' checked' : '';
       const checkbox = `<input type="checkbox" class="fe-check" data-path="${esc(fp)}"${checkedAttr} onclick="feToggleSelect(event,'${esc(fp)}')">`;
       if (ch.type === 'dir') {
-        if (!seenDirs.has(fp)) { collapsedDirs.add(fp); seenDirs.add(fp); }
+        if (!seenDirs.has(fp)) {
+          if (shouldDefaultCollapseDir(fp)) collapsedDirs.add(fp);
+          else collapsedDirs.delete(fp);
+          seenDirs.add(fp);
+        }
         const open = !collapsedDirs.has(fp);
-        items.push(`<div class="fe-item dir indent-${indent}${sel}" data-path="${esc(fp)}" onclick="feToggleDir('${esc(fp)}')" oncontextmenu="feCtx(event,'${esc(fp)}','dir')">${checkbox}<span class="arrow ${open ? 'open' : ''}">\u25B6</span><span class="icon">${open ? iconHtml('i:folder-open') : iconHtml('i:folder')}</span><span class="name">${esc(nm)}</span></div>`);
+        items.push(`<div class="fe-item dir indent-${indent}${sel}" data-path="${esc(fp)}" onclick="feToggleDir('${esc(fp)}')" oncontextmenu="feCtx(event,'${esc(fp)}','dir')">${checkbox}<span class="arrow ${open ? 'open' : ''}">&#x25B6;</span><span class="icon">${open ? iconHtml('i:folder-open') : iconHtml('i:folder')}</span><span class="name">${esc(nm)}</span></div>`);
         if (open) walk(ch, fp, d + 1);
       } else {
         const act = currentViewFile === fp ? ' active' : '';
@@ -10348,9 +10356,13 @@ function getVfsFileList() {
   return files;
 }
 
+function isSkillsVfsPath(path) {
+  return /^\/skills(?:\/|$)/.test(normPath(path || ''));
+}
+
 function showAtDropdown(query) {
   const dd = document.getElementById('atDropdown');
-  const all = getVfsFileList();
+  const all = getVfsFileList().filter(f => !isSkillsVfsPath(f.path));
   const q = query.toLowerCase();
   const filtered = q ? all.filter(f => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)) : all;
   if (!filtered.length) { dd.classList.remove('show'); atActive = false; return; }
