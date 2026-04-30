@@ -9892,19 +9892,23 @@ async function buildRequestBody(messages = buildConversationFromEntries(), headI
     return applyThinkingToRequestBody(body, 'anthropic');
   }
   const oai = [{ role: 'system', content: systemPrompt }];
+  const keepReasoning = isDeepSeekActiveProvider();
+  const skippedToolResultIds = new Set();
   for (const m of messages) {
     if (m.role === 'user') {
       if (Array.isArray(m.content)) {
         const userContent = buildOpenAIUserContent(m.content);
         for (const b of m.content) {
-          if (b.type === 'tool_result') oai.push({ role: 'tool', tool_call_id: b.tool_use_id, content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content) });
+          if (b.type === 'tool_result') {
+            if (keepReasoning && skippedToolResultIds.has(b.tool_use_id)) continue;
+            oai.push({ role: 'tool', tool_call_id: b.tool_use_id, content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content) });
+          }
         }
         if (userContent) oai.push({ role: 'user', content: userContent });
       }
       else oai.push({ role: 'user', content: m.content });
     } else if (m.role === 'assistant') {
       if (Array.isArray(m.content)) {
-        const keepReasoning = isDeepSeekActiveProvider();
         let t = '', reasoning = '';
         const tc = [];
         for (const b of m.content) {
@@ -9912,12 +9916,21 @@ async function buildRequestBody(messages = buildConversationFromEntries(), headI
           else if (keepReasoning && b.type === 'reasoning') reasoning += b.reasoning_content || b.text || '';
           else if (b.type === 'tool_use') tc.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } });
         }
+        if (keepReasoning && !reasoning) {
+          for (const call of tc) skippedToolResultIds.add(call.id);
+          if (t.trim()) oai.push({ role: 'user', content: `[Previous assistant response]\n${t}` });
+          continue;
+        }
         const msg = { role: 'assistant' };
         if (t) msg.content = t;
         if (reasoning) msg.reasoning_content = reasoning;
         if (tc.length) msg.tool_calls = tc;
         if (!t && !tc.length) msg.content = '';
         oai.push(msg);
+      }
+      else if (keepReasoning) {
+        const text = String(m.content || '').trim();
+        if (text) oai.push({ role: 'user', content: `[Previous assistant response]\n${text}` });
       }
       else oai.push({ role: 'assistant', content: m.content });
     }
