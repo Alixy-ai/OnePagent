@@ -2677,6 +2677,12 @@ function getLLMUrl() {
   return ep + '/v1/chat/completions';
 }
 
+function isDeepSeekActiveProvider() {
+  const p = ACTIVE_PROVIDER || {};
+  const haystack = [p.name, p.endpoint, p.defaultModel, API_MODEL, _keys?.api_endpoint, CFG.api_endpoint].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes('deepseek');
+}
+
 function getAuthHeaders() {
   const h = { 'Content-Type': 'application/json' };
   if (!_swReady && _keys) {
@@ -9160,6 +9166,10 @@ function formatConversationForExport() {
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type === 'text') lines.push(block.text || '');
+          else if (block.type === 'reasoning') {
+            lines.push('[Thinking]');
+            lines.push(block.reasoning_content || block.text || '');
+          }
           else if (block.type === 'tool_use') {
             lines.push('');
             lines.push(`### Tool Call: ${block.name}`);
@@ -9533,7 +9543,22 @@ async function buildRequestBody(messages = buildConversationFromEntries(), headI
       }
       else oai.push({ role: 'user', content: m.content });
     } else if (m.role === 'assistant') {
-      if (Array.isArray(m.content)) { let t = ''; const tc = []; for (const b of m.content) { if (b.type === 'text') t += b.text; else if (b.type === 'tool_use') tc.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } }); } const msg = { role: 'assistant' }; if (t) msg.content = t; if (tc.length) msg.tool_calls = tc; if (!t && !tc.length) msg.content = ''; oai.push(msg); }
+      if (Array.isArray(m.content)) {
+        const keepReasoning = isDeepSeekActiveProvider();
+        let t = '', reasoning = '';
+        const tc = [];
+        for (const b of m.content) {
+          if (b.type === 'text') t += b.text;
+          else if (keepReasoning && b.type === 'reasoning') reasoning += b.reasoning_content || b.text || '';
+          else if (b.type === 'tool_use') tc.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } });
+        }
+        const msg = { role: 'assistant' };
+        if (t) msg.content = t;
+        if (reasoning) msg.reasoning_content = reasoning;
+        if (tc.length) msg.tool_calls = tc;
+        if (!t && !tc.length) msg.content = '';
+        oai.push(msg);
+      }
       else oai.push({ role: 'assistant', content: m.content });
     }
   }
@@ -9614,14 +9639,15 @@ async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, on
   return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal };
 }
 
-async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta) {
-  const dec = new TextDecoder(); let buf = '', txt = ''; const tcs = {}; let stop = null; let usageTotal = 0;
+async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, options = {}) {
+  const keepReasoning = !!options.keepReasoning;
+  const dec = new TextDecoder(); let buf = '', txt = '', reasoning = ''; const tcs = {}; let stop = null; let usageTotal = 0;
   while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
     for (const line of lines) { if (!line.startsWith('data: ')) continue; const ds = line.slice(6).trim(); if (ds === '[DONE]') { stop = stop || 'end_turn'; continue; } let d; try { d = JSON.parse(ds); } catch { continue; } const usage = extractUsageTotal(d.usage); if (usage) usageTotal = usage; const ch = d.choices?.[0]; if (!ch) continue;
       if (ch.finish_reason) stop = ch.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
       const dl = ch.delta; if (!dl) continue;
       const reasoningChunk = extractReasoningChunkFromOpenAIDelta(dl);
-      if (reasoningChunk) onReasoning(reasoningChunk);
+      if (reasoningChunk) { if (keepReasoning) reasoning += reasoningChunk; onReasoning(reasoningChunk); }
       const textChunk = extractTextChunkFromOpenAIDelta(dl);
       if (textChunk) { txt += textChunk; onText(textChunk); }
       if (dl.tool_calls) {
@@ -9646,7 +9672,7 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
       }
     }
   }
-  const blocks = []; if (txt) blocks.push({ type: 'text', text: txt });
+  const blocks = []; if (keepReasoning && reasoning) blocks.push({ type: 'reasoning', reasoning_content: reasoning }); if (txt) blocks.push({ type: 'text', text: txt });
   for (const i of Object.keys(tcs).sort((a,b) => a-b)) { let inp = {}; try { inp = JSON.parse(tcs[i].arguments); } catch {} blocks.push({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: Number(i), input: inp }); }
   return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal };
 }
@@ -9818,7 +9844,7 @@ async function _runAgentLoop(userText, options = {}) {
       };
       const result = PROVIDER === 'anthropic_compat'
         ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta)
-        : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta);
+        : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider() });
       totalTokens += result.usage_total || 0;
       if (Number.isFinite(result.usage_total) && result.usage_total > 0) {
         contextTokens = result.usage_total;
@@ -9846,7 +9872,7 @@ async function _runAgentLoop(userText, options = {}) {
       }
       textEl.querySelector('.streaming-cursor')?.remove();
       finalizeReasoning(reasoningEl);
-      if (!fullText && result.content.every(b => b.type === 'tool_use')) msgEl.querySelector('[data-role="assistant-text"]')?.remove();
+      if (!fullText && result.content.some(b => b.type === 'tool_use') && result.content.every(b => b.type === 'tool_use' || b.type === 'reasoning')) msgEl.querySelector('[data-role="assistant-text"]')?.remove();
       const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId });
       rebuildConversation();
       msgEl.dataset.assistantEntryId = assistantEntry.id;
