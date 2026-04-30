@@ -5071,6 +5071,7 @@ function installSkill(skill) {
   if (!skill.references) skill.references = {};
   if (!skill.scripts) skill.scripts = {};
   if (!skill.files) skill.files = {};
+  if (!skill.binaryFiles) skill.binaryFiles = {};
   // Remove old version
   const old = skills.find(s => s.name === skill.name);
   if (old) unmountSkillFromVfs(old);
@@ -5420,45 +5421,110 @@ async function importFromGithub() {
   const match = url.match(/github\.com\/([^/]+\/[^/]+)/);
   if (!match) { alert('Invalid GitHub URL'); return; }
   const repo = match[1].replace(/\.git$/, '');
-  const basePath = skillPath ? skillPath.replace(/\/$/, '') + '/' : '';
+  const requestedPath = skillPath.replace(/^\/+|\/+$/g, '');
 
-  async function fetchRaw(path) {
-    const rawUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${path}`;
-    const resp = await fetch(rawUrl);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${path}`);
-    return await resp.text();
+  function _githubApiRef(ref) {
+    return encodeURIComponent(ref);
   }
-
-  async function listDir(path) {
-    try {
-      const resp = await fetch(`https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`);
-      if (!resp.ok) return [];
-      return await resp.json();
-    } catch { return []; }
+  function _dirname(path) {
+    const i = path.lastIndexOf('/');
+    return i >= 0 ? path.slice(0, i) : '';
+  }
+  function _pathWithin(path, root) {
+    return root ? (path === root || path.startsWith(root + '/')) : true;
+  }
+  function _relPath(path, root) {
+    return root ? path.slice(root.length + 1) : path;
+  }
+  function _base64ToBytes(b64) {
+    const raw = atob(String(b64 || '').replace(/\s/g, ''));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+  function _isBinaryGithubPath(path) {
+    return BINARY_EXTS.has(String(path || '').split('.').pop().toLowerCase());
+  }
+  function _putSkillAsset(skill, rel, bytes, isBinary) {
+    if (!rel || rel === 'SKILL.md' || rel === 'skill.json') return;
+    if (!skill.files) skill.files = {};
+    if (!skill.binaryFiles) skill.binaryFiles = {};
+    if (!skill.references) skill.references = {};
+    if (!skill.scripts) skill.scripts = {};
+    if (isBinary) {
+      skill.binaryFiles[rel] = Array.from(bytes);
+      skill.files[rel] = `[Binary: ${rel}, ${bytes.length} bytes]`;
+      return;
+    }
+    const text = new TextDecoder().decode(bytes);
+    skill.files[rel] = text;
+    if (rel.startsWith('references/')) skill.references[rel.slice(11)] = text;
+    else if (rel.startsWith('scripts/')) skill.scripts[rel.slice(8)] = text;
+  }
+  async function fetchJson(apiUrl) {
+    const resp = await fetch(apiUrl);
+    if (!resp.ok) throw new Error(`GitHub API HTTP ${resp.status}`);
+    return await resp.json();
+  }
+  async function fetchBlobBytes(blobUrl, path) {
+    const blob = await fetchJson(blobUrl);
+    if (blob.encoding !== 'base64' || !blob.content) throw new Error(`Unsupported GitHub blob encoding for ${path}`);
+    return _base64ToBytes(blob.content);
   }
 
   try {
-    // Fetch SKILL.md (primary) or skill.json (fallback)
+    const treeUrl = `https://api.github.com/repos/${repo}/git/trees/${_githubApiRef(branch)}?recursive=1`;
+    const treeData = await fetchJson(treeUrl);
+    const blobs = (treeData.tree || []).filter(e => e.type === 'blob' && e.path);
+    if (!blobs.length) throw new Error('Repository tree is empty or unavailable');
+
+    let skillRoot = requestedPath;
+    let skillMdEntry = null;
+    let skillJsonEntry = null;
+    if (skillRoot) {
+      skillMdEntry = blobs.find(e => e.path === `${skillRoot}/SKILL.md`);
+      skillJsonEntry = !skillMdEntry && blobs.find(e => e.path === `${skillRoot}/skill.json`);
+      if (!skillMdEntry && !skillJsonEntry) throw new Error(`No SKILL.md or skill.json found under ${skillRoot}`);
+    } else {
+      const skillMdCandidates = blobs
+        .filter(e => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))
+        .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path));
+      skillMdEntry = skillMdCandidates[0] || null;
+      const skillJsonCandidates = !skillMdEntry ? blobs
+        .filter(e => e.path === 'skill.json' || e.path.endsWith('/skill.json'))
+        .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path)) : [];
+      skillJsonEntry = skillJsonCandidates[0] || null;
+      if (!skillMdEntry && !skillJsonEntry) throw new Error('No SKILL.md or skill.json found in repository');
+      skillRoot = _dirname((skillMdEntry || skillJsonEntry).path);
+    }
+
     let skill;
-    try {
-      const md = await fetchRaw(basePath + 'SKILL.md');
+    if (skillMdEntry) {
+      const md = new TextDecoder().decode(await fetchBlobBytes(skillMdEntry.url, skillMdEntry.path));
       skill = skillFromMd(md, `github:${repo}@${branch}`);
-    } catch {
-      const json = await fetchRaw(basePath + (skillPath ? 'skill.json' : 'skill.json'));
+      skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
+    } else {
+      const json = new TextDecoder().decode(await fetchBlobBytes(skillJsonEntry.url, skillJsonEntry.path));
       skill = JSON.parse(json);
-      skill.source = `github:${repo}@${branch}`;
+      skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
     }
     if (!skill.references) skill.references = {};
     if (!skill.scripts) skill.scripts = {};
+    if (!skill.files) skill.files = {};
+    if (!skill.binaryFiles) skill.binaryFiles = {};
 
-    // Try to fetch references/ and scripts/ directories
-    const refFiles = await listDir(basePath + 'references');
-    for (const f of refFiles) {
-      if (f.type === 'file') { try { skill.references[f.name] = await fetchRaw(f.path); } catch {} }
-    }
-    const scriptFiles = await listDir(basePath + 'scripts');
-    for (const f of scriptFiles) {
-      if (f.type === 'file') { try { skill.scripts[f.name] = await fetchRaw(f.path); } catch {} }
+    const rootFiles = blobs
+      .filter(e => _pathWithin(e.path, skillRoot))
+      .filter(e => e.path !== skillMdEntry?.path && e.path !== skillJsonEntry?.path)
+      .sort((a, b) => a.path.localeCompare(b.path));
+    for (const entry of rootFiles) {
+      const rel = _relPath(entry.path, skillRoot);
+      try {
+        const bytes = await fetchBlobBytes(entry.url, entry.path);
+        _putSkillAsset(skill, rel, bytes, _isBinaryGithubPath(rel));
+      } catch (e) {
+        console.warn('Failed to fetch skill asset from GitHub:', entry.path, e);
+      }
     }
 
     installSkill(skill); closeSkillModal();
