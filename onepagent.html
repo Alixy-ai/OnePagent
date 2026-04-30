@@ -3943,6 +3943,7 @@ async function ensurePyodide() {
     }
     pyodideLoading = false;
     appendSystemMsg('Python runtime ready (Pyodide).');
+    if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
     return pyodideInstance;
   } catch (e) {
     pyodideLoading = false;
@@ -4035,6 +4036,149 @@ const _PY_BIN_PATH_PATTERNS = [
   /open\s*\(\s*(['"])([^'"]+)\1\s*,\s*['"][rab+]*b[rab+]*['"]/g,
   /(?:Path|pathlib\.Path|WorkspacePath)\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*(?:read_bytes|open)/g,
 ];
+
+function _pathBaseName(path) {
+  return String(path || '').replace(/\/+$/, '').split('/').pop() || 'file';
+}
+function _pathDirName(path) {
+  const p = String(path || '').replace(/\/+$/, '');
+  const i = p.lastIndexOf('/');
+  return i > 0 ? p.slice(0, i) : '/';
+}
+function _isBinaryPathByExt(path) {
+  const ext = String(path || '').split('.').pop().toLowerCase();
+  return BINARY_EXTS.has(ext);
+}
+function _pyNativePath(path, fallback) {
+  let p = String(path || fallback || '').trim();
+  if (!p) p = '/tmp';
+  if (!p.startsWith('/')) p = '/tmp/' + p;
+  return p.replace(/\/+/g, '/');
+}
+function _pyExists(pyodide, path) {
+  try { return !!pyodide.FS.analyzePath(path).exists; } catch { return false; }
+}
+function _pyStat(pyodide, path) {
+  try { return pyodide.FS.stat(path); } catch { return null; }
+}
+function _pyIsDir(pyodide, path) {
+  const st = _pyStat(pyodide, path);
+  return !!st && pyodide.FS.isDir(st.mode);
+}
+function _pyIsFile(pyodide, path) {
+  const st = _pyStat(pyodide, path);
+  return !!st && pyodide.FS.isFile(st.mode);
+}
+function _pyEnsureDir(pyodide, path) {
+  path = _pyNativePath(path, '/tmp');
+  if (path === '/') return;
+  if (_pyExists(pyodide, path)) {
+    if (!_pyIsDir(pyodide, path)) throw new Error(`Native path is not a directory: ${path}`);
+    return;
+  }
+  pyodide.FS.mkdirTree(path);
+}
+function _resolveCopyFileDest(pyodide, dest, srcName) {
+  dest = _pyNativePath(dest, '/tmp/' + srcName);
+  if (dest.endsWith('/') || _pyIsDir(pyodide, dest)) return (dest.replace(/\/+$/, '') || '/') + '/' + srcName;
+  return dest;
+}
+function _resolveVfsCopyFileDest(destRaw, dest, srcName) {
+  const existing = vfsResolve(dest);
+  if (String(destRaw || '').trim().endsWith('/') || existing?.type === 'dir') return normPath(dest + '/' + srcName);
+  return dest;
+}
+async function _collectVfsFiles(srcPath) {
+  srcPath = normPath(srcPath);
+  const root = vfsResolve(srcPath);
+  if (!root) throw new Error(`VFS path not found: ${srcPath}`);
+  const out = [];
+  async function walk(path, node, rel) {
+    if (node.type === 'dir') {
+      for (const [name, child] of Object.entries(node.children || {})) {
+        await walk((path === '/' ? '' : path) + '/' + name, child, rel ? rel + '/' + name : name);
+      }
+      return;
+    }
+    if (node.binary) {
+      const bytes = await vfsGetBinary(path);
+      if (!bytes) throw new Error(`Binary bytes unavailable: ${path}`);
+      out.push({ path, rel, binary: true, bytes });
+    } else {
+      out.push({ path, rel, binary: false, content: node.content || '' });
+    }
+  }
+  await walk(srcPath, root, root.type === 'file' ? _pathBaseName(srcPath) : '');
+  return { root, files: out };
+}
+async function toolVfsToPyodide(input) {
+  input = input && typeof input === 'object' ? input : {};
+  const sourceRaw = String(input.source_path || input.vfs_path || '').trim();
+  if (!sourceRaw) return 'Error: source_path is required.';
+  const source = normPath(sourceRaw);
+  const overwrite = input.overwrite !== false;
+  const pyodide = await ensurePyodide();
+  const { root, files } = await _collectVfsFiles(source);
+  const targetRaw = String(input.target_path || input.pyodide_path || '').trim();
+  const target = _pyNativePath(targetRaw, root.type === 'dir' ? `/tmp/${_pathBaseName(source)}` : `/tmp/${_pathBaseName(source)}`);
+  const written = [];
+  if (root.type === 'dir') _pyEnsureDir(pyodide, target);
+  for (const file of files) {
+    const dest = root.type === 'dir'
+      ? (target.replace(/\/+$/, '') || '/') + '/' + file.rel
+      : _resolveCopyFileDest(pyodide, target, _pathBaseName(source));
+    if (_pyExists(pyodide, dest) && !overwrite) throw new Error(`Native path exists: ${dest}`);
+    _pyEnsureDir(pyodide, _pathDirName(dest));
+    pyodide.FS.writeFile(dest, file.binary ? file.bytes : file.content, file.binary ? undefined : { encoding: 'utf8' });
+    written.push(dest);
+  }
+  return `Copied ${written.length} file(s) from VFS to Pyodide native FS:\n` + written.join('\n');
+}
+function _collectPyodideFiles(pyodide, source, binaryOverride = null) {
+  source = _pyNativePath(source, '/tmp');
+  if (!_pyExists(pyodide, source)) throw new Error(`Pyodide path not found: ${source}`);
+  const out = [];
+  function walk(path, rel) {
+    if (_pyIsDir(pyodide, path)) {
+      for (const name of pyodide.FS.readdir(path)) {
+        if (name === '.' || name === '..') continue;
+        walk((path.replace(/\/+$/, '') || '/') + '/' + name, rel ? rel + '/' + name : name);
+      }
+      return;
+    }
+    if (!_pyIsFile(pyodide, path)) return;
+    out.push({ path, rel: rel || _pathBaseName(path), binary: typeof binaryOverride === 'boolean' ? binaryOverride : _isBinaryPathByExt(path) });
+  }
+  walk(source, _pyIsFile(pyodide, source) ? _pathBaseName(source) : '');
+  return { isDir: _pyIsDir(pyodide, source), files: out };
+}
+async function toolPyodideToVfs(input) {
+  input = input && typeof input === 'object' ? input : {};
+  const sourceRaw = String(input.source_path || input.pyodide_path || '').trim();
+  if (!sourceRaw) return 'Error: source_path is required.';
+  const source = _pyNativePath(sourceRaw, '');
+  const pyodide = await ensurePyodide();
+  const overwrite = input.overwrite !== false;
+  const binaryOverride = typeof input.binary === 'boolean' ? input.binary : null;
+  const { isDir, files } = _collectPyodideFiles(pyodide, source, binaryOverride);
+  const targetRaw = String(input.target_path || input.vfs_path || '').trim();
+  const target = normPath(targetRaw || (isDir ? `/outputs/${_pathBaseName(source)}` : `/outputs/${_pathBaseName(source)}`));
+  const written = [];
+  for (const file of files) {
+    const dest = isDir ? normPath(target + '/' + file.rel) : _resolveVfsCopyFileDest(targetRaw, target, _pathBaseName(source));
+    if (vfsResolve(dest) && !overwrite) throw new Error(`VFS path exists: ${dest}`);
+    if (file.binary) {
+      const bytes = pyodide.FS.readFile(file.path);
+      await vfsWriteBinary(dest, bytes, true);
+    } else {
+      const text = pyodide.FS.readFile(file.path, { encoding: 'utf8' });
+      vfsWrite(dest, text, true);
+    }
+    written.push(dest);
+  }
+  if (written.length) renderFileTree();
+  return `Copied ${written.length} file(s) from Pyodide native FS to VFS:\n` + written.join('\n');
+}
 
 function _pyScanBinaryPaths(code) {
   const paths = new Set();
@@ -8394,6 +8538,11 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'ExitPlanMode', description: 'Call this ONLY while Plan Mode is active and your plan is ready for user approval. Pass the full plan as Markdown. The user gets an Approve/Reject dialog. If approved, Plan Mode exits and you may execute write tools on the next turn. If rejected, you receive the user\'s feedback and must revise the plan while staying in Plan Mode.', input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'Complete, reviewable plan in Markdown.' } }, required: ['plan'] } },
 ];
 
+const PYODIDE_NATIVE_TOOLS = [
+  { name: 'VfsToPyodide', description: 'Copy a file or directory from the virtual filesystem into Pyodide native filesystem, usually under /tmp, for Python libraries that require a real native path. Available only after Pyodide has loaded.', input_schema: { type: 'object', properties: { source_path: { type: 'string', description: 'Source path in VFS, e.g. /assets/input.xlsx or /work/data.' }, target_path: { type: 'string', description: 'Destination path in Pyodide native FS. Defaults to /tmp/<source name>. If a directory is given for a file source, the original filename is used inside it.' }, overwrite: { type: 'boolean', description: 'Overwrite existing Pyodide native files. Defaults to true.' } }, required: ['source_path'] } },
+  { name: 'PyodideToVfs', description: 'Copy a file or directory from Pyodide native filesystem back into the virtual filesystem. Use after a Python library writes outputs under /tmp. Available only after Pyodide has loaded.', input_schema: { type: 'object', properties: { source_path: { type: 'string', description: 'Source path in Pyodide native FS, e.g. /tmp/output.xlsx or /tmp/results.' }, target_path: { type: 'string', description: 'Destination path in VFS. Defaults to /outputs/<source name>. If a directory is given for a file source, the original filename is used inside it.' }, overwrite: { type: 'boolean', description: 'Overwrite existing VFS files. Defaults to true.' }, binary: { type: 'boolean', description: 'Optional override for file encoding. Defaults to binary detection by extension.' } }, required: ['source_path'] } },
+];
+
 let allToolsAnthropic = [...BASE_TOOLS_ANTHROPIC];
 let allToolsOpenAI = [];
 let skillToolHandlers = {};
@@ -8517,6 +8666,7 @@ function rebuildToolDefs(headId = activeEntryId) {
     if (t.name === 'GenerateVideo') return hasConfiguredDefaultMediaModel('video');
     return true;
   });
+  if (pyodideInstance) allToolsAnthropic.push(...PYODIDE_NATIVE_TOOLS);
   skillToolHandlers = {};
   for (const st of getAllSkillTools()) {
     if (st.handler) skillToolHandlers[st.name] = st.handler;
@@ -8542,7 +8692,7 @@ function rebuildToolDefs(headId = activeEntryId) {
 }
 
 function renderToolsGrid() {
-  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', JSExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film' };
+  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film' };
   const el = document.getElementById('toolsGrid');
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
@@ -8555,7 +8705,7 @@ function renderToolsGrid() {
 // TOOL IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════
 // Plan Mode: writes are blocked, read-only tools and meta-tools are allowed.
-const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'JSExec']);
+const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'VfsToPyodide', 'PyodideToVfs', 'JSExec']);
 
 async function executeTool(name, input) {
   try {
@@ -8575,6 +8725,8 @@ async function executeTool(name, input) {
       case 'Grep': return toolGrep(input);
       case 'Bash': return await toolBash(input);
       case 'PythonExec': return await toolPythonExec(input);
+      case 'VfsToPyodide': return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
+      case 'PyodideToVfs': return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'JSExec': return await toolJSExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
@@ -9995,6 +10147,10 @@ function getMediaToolPrompt() {
   parts.push('Omit the model argument unless the user explicitly names one so the configured default image/video model is used. The tool prompt must be a complete generation prompt synthesized from the latest user request and relevant conversation history (style, subject, constraints, prior revisions), not just a verbatim copy of the last user message. Do not merely describe requested media when the matching generation tool is available.');
   return '\n\n[MEDIA GENERATION]\n' + parts.join(' ');
 }
+function getPyodideNativeToolPrompt() {
+  if (!pyodideInstance) return '';
+  return '\n\n[PYODIDE NATIVE FILES]\nPyodide is loaded. When a Python library needs a real native path under /tmp, use VfsToPyodide to copy VFS files into Pyodide native FS, run PythonExec against the /tmp path, then use PyodideToVfs to copy outputs back to VFS.';
+}
 function shouldAutoGenerateMedia(text) {
   text = String(text || '').toLowerCase();
   if (!text) return null;
@@ -10072,10 +10228,11 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
   }
 }
 async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
-  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const mediaToolPrompt = getMediaToolPrompt();
+  const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const memPrompt = await memRecallForPrompt(messages);
-  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + mediaToolPrompt + planPrompt + memPrompt;
+  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
   rebuildToolDefs(headId);
   if (PROVIDER === 'anthropic_compat') {
     const body = {
