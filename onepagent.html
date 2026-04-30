@@ -3012,7 +3012,8 @@ Available tools:
 - Grep: Search file contents with regex
 - Bash: Simulated shell against virtual filesystem (ls, cat, find, mkdir, rm, pwd, cd, tree, head, tail, wc, cp, mv, touch, grep, echo)
 - PythonExec: Run Python code in-browser (Pyodide WASM). Python file APIs are bridged to the shared browser filesystem through a workspacefs layer, so normal paths like /src/main.py and /skills/my-skill/SKILL.md work directly without full filesystem sync. For libraries that require a native temp path, use workspacefs.materialize_to_tmp(...) and workspacefs.persist_tmp_file(...). Use micropip only for pure-Python packages. An internal helper module \`workspace_cli\` and a ready-to-run script at \`/__internal__/workspace_cli.py\` are also available for higher-level file operations.
-- JSExec: Run JavaScript in browser sandbox. Use vfsRead/vfsWrite for text files, vfsReadBinary/vfsWriteBinary for binary files, vfsStat for metadata, console.log() for output, fetch() for HTTP.
+- JSExec: Run JavaScript in browser sandbox. Use vfsRead/vfsWrite for text files, vfsReadBinary/vfsWriteBinary for binary files, vfsStat for metadata, console.log() for output, fetch() for HTTP. JSExec is not Node.
+- NodeExec: Run Node.js-compatible JavaScript/scripts in a browser WebContainer. Use when Node APIs or Node runtime behavior are required. WebContainers require HTTPS/localhost and cross-origin isolation. NodeExec uses a separate WebContainer filesystem: pass explicit sync_in paths to copy VFS files in, and sync_out paths to copy generated outputs back.
 - WebSearch: Search the web via Tavily AI. Returns titles, URLs and content snippets. Requires a Tavily API key set in the Web Search panel (right sidebar).
 
 Filesystem rules:
@@ -3054,16 +3055,24 @@ PythonExec quick examples:
   # run library with tmp_in/tmp_out
   workspacefs.persist_tmp_file(tmp_out, "/outputs/out.pptx", binary=True)
 
+NodeExec file strategy:
+- Use NodeExec only when you need Node.js APIs, CommonJS/ESM behavior, or Node project scripts.
+- NodeExec runs in a separate WebContainer filesystem. It does not automatically see VFS files.
+- Use focused sync_in entries such as /src/app.js, /package.json, or /src rather than syncing / broadly.
+- Use sync_out for generated outputs that should be copied back to VFS, such as /outputs/result.json.
+- Do not assume npm dependencies are installed unless you explicitly sync the project files and run installation commands inside NodeExec.
+
 Tool routing:
 - Python data processing, file generation, pure-Python packages, path-based Python libraries, and most non-trivial automation → PythonExec
-- JSExec is best for simple JavaScript snippets, light JSON transforms, browser-side API calls, and small verification scripts
-- For complex execution tasks, prefer PythonExec unless the task specifically requires JavaScript runtime behavior
+- JSExec is best for simple browser JavaScript snippets, light JSON transforms, browser-side API calls, direct VFS helper usage, and small verification scripts
+- Node APIs, CommonJS/ESM behavior, package scripts, and Node runtime compatibility → NodeExec
+- For complex execution tasks, prefer PythonExec unless the task specifically requires JavaScript or Node runtime behavior
 - File read/write/edit/search → Read/Write/Edit/Glob/Grep
 - Directory listing and quick inspection → Bash (ls, tree)
 
 Execution workflow:
-- npm is not available by default in this browser sandbox; do not assume package managers or Node-based build tooling can be used unless you have verified they exist in the current environment.
-- For larger PythonExec or JSExec tasks, prefer writing the script to a local workspace file first, then execute that file.
+- npm/Node build tooling is available only through NodeExec/WebContainers when the browser environment supports it and the needed project files are synced into the container. JSExec is not Node.
+- For larger PythonExec, JSExec, or NodeExec tasks, prefer writing the script to a local workspace file first, then execute that file.
 - Create a dedicated working directory such as /scratch, /tmp-work, or /outputs/scripts for those scripts when needed.
 - Do not place ad-hoc execution scripts under /skills/...; keep skills directories reserved for installed skill assets.
 - When you expect the script to be reused, debugged, or modified in multiple iterations, keep it as a file instead of embedding a long one-off inline script.
@@ -3074,7 +3083,7 @@ When working with code:
 1. Explore structure first (Glob or Bash with ls/tree)
 2. Read relevant files to understand the codebase
 3. Make changes via Write (new files) or Edit (modifications to existing files)
-4. Run/test code with PythonExec or JSExec
+4. Run/test code with PythonExec, JSExec, or NodeExec
 5. Verify changes by reading modified files
 
 Be concise. Focus on code changes. When you make edits, explain what you changed and why.
@@ -3949,6 +3958,218 @@ async function ensurePyodide() {
     pyodideLoading = false;
     throw new Error('Failed to load Pyodide: ' + e.message);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// WEBCONTAINER RUNTIME (lazy-loaded browser Node)
+// ═══════════════════════════════════════════════════════════════════
+let webcontainerInstance = null;
+let webcontainerLoading = false;
+let webcontainerApiModule = null;
+const WEBCONTAINER_API_URL = 'https://esm.sh/@webcontainer/api';
+const NODEEXEC_RUN_DIR = '/__nodeexec__';
+const NODEEXEC_DEFAULT_TIMEOUT_MS = 10000;
+const NODEEXEC_MAX_TIMEOUT_MS = 60000;
+const NODEEXEC_MAX_SYNC_FILES = 500;
+const NODEEXEC_MAX_SYNC_BYTES = 25 * 1024 * 1024;
+const NODEEXEC_MAX_OUTPUT_CHARS = 200000;
+
+function _getWebContainerEnvironmentProblem() {
+  const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '[::1]';
+  if (!window.isSecureContext || (location.protocol !== 'https:' && !isLocalhost)) return 'WebContainers require HTTPS or localhost.';
+  if (typeof SharedArrayBuffer === 'undefined') return 'WebContainers require SharedArrayBuffer support.';
+  if (!window.crossOriginIsolated) return 'WebContainers require cross-origin isolation. Serve this page with Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp, then reload.';
+  return '';
+}
+
+async function ensureWebContainer() {
+  if (webcontainerInstance) return webcontainerInstance;
+  if (webcontainerLoading) {
+    while (webcontainerLoading) await new Promise(r => setTimeout(r, 100));
+    if (webcontainerInstance) return webcontainerInstance;
+    throw new Error('Failed to load WebContainer.');
+  }
+  const problem = _getWebContainerEnvironmentProblem();
+  if (problem) throw new Error(`${problem}\n\nNodeExec needs WebContainers, which require:\n- HTTPS or localhost\n- SharedArrayBuffer\n- Cross-Origin-Opener-Policy: same-origin\n- Cross-Origin-Embedder-Policy: require-corp\n\nA single static HTML file cannot set these response headers by itself. Serve onepagent.html through a local/static server that sends them, then reload.`);
+  webcontainerLoading = true;
+  appendSystemMsg('Loading Node runtime (WebContainers)...');
+  try {
+    webcontainerApiModule = webcontainerApiModule || await import(WEBCONTAINER_API_URL);
+    webcontainerInstance = await webcontainerApiModule.WebContainer.boot();
+    await _wcEnsureDir(webcontainerInstance, NODEEXEC_RUN_DIR);
+    webcontainerLoading = false;
+    appendSystemMsg('Node runtime ready (WebContainers).');
+    if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
+    return webcontainerInstance;
+  } catch (e) {
+    webcontainerLoading = false;
+    throw new Error('Failed to load WebContainer: ' + (e.message || e));
+  }
+}
+
+function _wcNativePath(path, fallback = '/') {
+  let p = String(path || fallback || '').trim();
+  if (!p) p = fallback || '/';
+  p = p.replace(/\\+/g, '/');
+  if (!p.startsWith('/')) p = '/' + p;
+  p = p.replace(/\/+/g, '/');
+  const out = [];
+  for (const part of p.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') out.pop(); else out.push(part);
+  }
+  return '/' + out.join('/');
+}
+
+async function _wcEnsureDir(wc, path) {
+  path = _wcNativePath(path, '/');
+  if (path === '/') return;
+  try { await wc.fs.mkdir(path, { recursive: true }); } catch (e) {
+    if (!/exist|EEXIST/i.test(String(e?.message || e))) throw e;
+  }
+}
+
+async function _wcExists(wc, path) {
+  path = _wcNativePath(path, '/');
+  try { await wc.fs.readdir(path); return { exists: true, type: 'dir' }; } catch {}
+  try { await wc.fs.readFile(path); return { exists: true, type: 'file' }; } catch {}
+  return { exists: false, type: null };
+}
+
+async function _wcWriteFile(wc, path, file, overwrite = true) {
+  path = _wcNativePath(path, '/');
+  const existing = await _wcExists(wc, path);
+  if (existing.exists && !overwrite) throw new Error(`WebContainer path exists: ${path}`);
+  await _wcEnsureDir(wc, _pathDirName(path));
+  await wc.fs.writeFile(path, file.binary ? file.bytes : file.content);
+}
+
+async function _wcReadFile(wc, path, binary) {
+  path = _wcNativePath(path, '/');
+  const data = await wc.fs.readFile(path, binary ? undefined : 'utf-8');
+  if (binary) return data instanceof Uint8Array ? data : new Uint8Array(data);
+  return typeof data === 'string' ? data : new TextDecoder().decode(data);
+}
+
+function _asArray(v) { return Array.isArray(v) ? v : (v ? [v] : []); }
+function _matchesAnyGlob(path, patterns) { return _asArray(patterns).some(p => globMatch(String(p), path)); }
+function _passesSyncFilters(file, entry) {
+  const rel = file.rel || _pathBaseName(file.path);
+  if (entry.include && !globMatch(String(entry.include), rel) && !globMatch(String(entry.include), file.path)) return false;
+  if (entry.exclude && (_matchesAnyGlob(rel, entry.exclude) || _matchesAnyGlob(file.path, entry.exclude))) return false;
+  return true;
+}
+
+function _formatBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function _checkSyncLimits(files, maxFiles = NODEEXEC_MAX_SYNC_FILES, maxBytes = NODEEXEC_MAX_SYNC_BYTES) {
+  const totalBytes = files.reduce((sum, f) => sum + (f.binary ? (f.bytes?.length || f.size || 0) : (f.content || '').length), 0);
+  if (files.length > maxFiles) throw new Error(`sync exceeded file limit: ${files.length} > ${maxFiles}`);
+  if (totalBytes > maxBytes) throw new Error(`sync exceeded byte limit: ${_formatBytes(totalBytes)} > ${_formatBytes(maxBytes)}`);
+  return totalBytes;
+}
+
+function _rejectUnsafeRootSync(source, allowRootSync) {
+  if (_wcNativePath(source, '/') === '/' && !allowRootSync) throw new Error('Refusing to sync / by default. Pass allow_root_sync: true and a focused include pattern if you really need it.');
+}
+
+async function _collectWebContainerFiles(wc, source, binaryOverride = null, options = {}) {
+  source = _wcNativePath(source, '/');
+  const sourceBase = source.replace(/\/+$/, '') || '/';
+  const explicitSpecial = /(^|\/)node_modules($|\/)|^\/__nodeexec__($|\/)/.test(sourceBase);
+  const out = [];
+  async function walk(path, rel) {
+    let entries;
+    try { entries = await wc.fs.readdir(path, { withFileTypes: true }); } catch {
+      const binary = binaryOverride == null ? _isBinaryPathByExt(path) : !!binaryOverride;
+      const data = await _wcReadFile(wc, path, binary);
+      out.push({ path, rel: rel || _pathBaseName(path), binary, bytes: binary ? data : undefined, content: binary ? undefined : data, size: binary ? data.length : data.length });
+      return;
+    }
+    for (const entry of entries) {
+      const name = typeof entry === 'string' ? entry : entry.name;
+      if (!name || name === '.' || name === '..') continue;
+      const child = (path === '/' ? '' : path) + '/' + name;
+      const childRel = rel ? rel + '/' + name : name;
+      if (!explicitSpecial && !options.includeSpecial && (/^node_modules($|\/)/.test(childRel) || /^__nodeexec__($|\/)/.test(childRel))) continue;
+      const isDir = typeof entry !== 'string' && typeof entry.isDirectory === 'function' ? entry.isDirectory() : null;
+      if (isDir === true) await walk(child, childRel);
+      else if (isDir === false) {
+        const binary = binaryOverride == null ? _isBinaryPathByExt(child) : !!binaryOverride;
+        const data = await _wcReadFile(wc, child, binary);
+        out.push({ path: child, rel: childRel, binary, bytes: binary ? data : undefined, content: binary ? undefined : data, size: binary ? data.length : data.length });
+      } else {
+        await walk(child, childRel);
+      }
+    }
+  }
+  await walk(sourceBase, '');
+  return { isDir: out.length !== 1 || out[0].path !== sourceBase, files: out };
+}
+
+function _resolveWcCopyDest(targetRaw, target, srcName) {
+  if (String(targetRaw || '').trim().endsWith('/')) return (target.replace(/\/+$/, '') || '/') + '/' + srcName;
+  return target;
+}
+
+async function _syncVfsToWebContainer(wc, entries, options = {}) {
+  const written = [];
+  let totalBytes = 0;
+  for (const entryRaw of entries || []) {
+    const entry = entryRaw && typeof entryRaw === 'object' ? entryRaw : { source_path: entryRaw };
+    const sourceRaw = String(entry.source_path || entry.vfs_path || '').trim();
+    if (!sourceRaw) throw new Error('sync_in source_path is required.');
+    const source = normPath(sourceRaw);
+    _rejectUnsafeRootSync(source, options.allowRootSync);
+    const { root, files } = await _collectVfsFiles(source);
+    const filtered = files.filter(f => _passesSyncFilters(f, entry));
+    totalBytes += _checkSyncLimits(filtered, entry.max_files || options.maxFiles, entry.max_bytes || options.maxBytes);
+    const targetRaw = String(entry.target_path || '').trim();
+    const target = _wcNativePath(targetRaw, source);
+    if (root.type === 'dir') await _wcEnsureDir(wc, target);
+    for (const file of filtered) {
+      const dest = root.type === 'dir'
+        ? (target.replace(/\/+$/, '') || '/') + '/' + file.rel
+        : _resolveWcCopyDest(targetRaw, target, _pathBaseName(source));
+      await _wcWriteFile(wc, dest, file, entry.overwrite !== false);
+      written.push(dest);
+    }
+  }
+  return { files: written, bytes: totalBytes };
+}
+
+async function _syncWebContainerToVfs(wc, entries, options = {}) {
+  const written = [];
+  let totalBytes = 0;
+  for (const entryRaw of entries || []) {
+    const entry = entryRaw && typeof entryRaw === 'object' ? entryRaw : { source_path: entryRaw };
+    const sourceRaw = String(entry.source_path || entry.webcontainer_path || '').trim();
+    if (!sourceRaw) throw new Error('sync_out source_path is required.');
+    const source = _wcNativePath(sourceRaw, '/');
+    _rejectUnsafeRootSync(source, options.allowRootSync);
+    const { files } = await _collectWebContainerFiles(wc, source, Object.prototype.hasOwnProperty.call(entry, 'binary') ? !!entry.binary : null);
+    const filtered = files.filter(f => _passesSyncFilters(f, entry));
+    totalBytes += _checkSyncLimits(filtered, entry.max_files || options.maxFiles, entry.max_bytes || options.maxBytes);
+    const targetRaw = String(entry.target_path || '').trim();
+    const target = normPath(targetRaw || source);
+    const sourceIsSingleFile = filtered.length === 1 && filtered[0].path === source;
+    for (const file of filtered) {
+      const dest = sourceIsSingleFile
+        ? _resolveVfsCopyFileDest(targetRaw, target, _pathBaseName(source))
+        : normPath((target.replace(/\/+$/, '') || '/') + '/' + file.rel);
+      if (vfsResolve(dest) && entry.overwrite === false) throw new Error(`VFS path exists: ${dest}`);
+      if (file.binary) await vfsWriteBinary(dest, file.bytes, true);
+      else vfsWrite(dest, file.content || '', true);
+      written.push(dest);
+    }
+  }
+  if (written.length) renderFileTree();
+  return { files: written, bytes: totalBytes };
 }
 
 function vfsStat(path) {
@@ -5084,6 +5305,74 @@ async function toolJSExec(input) {
   } catch (e) {
     const output = logs.length ? logs.join('\n') + '\n' : '';
     return `${output}Error: ${e.message}`;
+  }
+}
+
+function _truncateNodeOutput(text) {
+  text = String(text || '');
+  if (text.length <= NODEEXEC_MAX_OUTPUT_CHARS) return text;
+  return text.slice(0, NODEEXEC_MAX_OUTPUT_CHARS) + `\n... output truncated after ${NODEEXEC_MAX_OUTPUT_CHARS} characters ...`;
+}
+
+function _nodeExecSummary(label, sync) {
+  if (!sync || !sync.files?.length) return `${label}: 0 file(s)`;
+  const shown = sync.files.slice(0, 20).map(p => `- ${p}`).join('\n');
+  const more = sync.files.length > 20 ? `\n- ... ${sync.files.length - 20} more` : '';
+  return `${label}: ${sync.files.length} file(s), ${_formatBytes(sync.bytes)}\n${shown}${more}`;
+}
+
+async function _collectWebContainerProcessOutput(proc) {
+  const chunks = [];
+  if (!proc.output || typeof proc.output.pipeTo !== 'function') return chunks;
+  await proc.output.pipeTo(new WritableStream({
+    write(data) { chunks.push(String(data)); }
+  })).catch(() => {});
+  return chunks;
+}
+
+async function toolNodeExec(input) {
+  input = input && typeof input === 'object' ? input : {};
+  const hasCode = typeof input.code === 'string' && input.code.length > 0;
+  const hasScript = typeof input.script_path === 'string' && input.script_path.trim().length > 0;
+  if (hasCode === hasScript) return 'Error: NodeExec requires exactly one of code or script_path.';
+  try {
+    const wc = await ensureWebContainer();
+    const timeoutMs = Math.max(1, Math.min(Number(input.timeout_ms) || NODEEXEC_DEFAULT_TIMEOUT_MS, NODEEXEC_MAX_TIMEOUT_MS));
+    const allowRootSync = input.allow_root_sync === true;
+    const syncIn = Array.isArray(input.sync_in) ? [...input.sync_in] : [];
+    const syncOut = Array.isArray(input.sync_out) ? input.sync_out : [];
+    let scriptPath;
+    if (hasScript) {
+      const vfsScript = normPath(input.script_path);
+      if (!vfsResolve(vfsScript)) return `Error: script_path not found in VFS: ${vfsScript}`;
+      if (!syncIn.some(e => normPath((e && typeof e === 'object' ? e.source_path || e.vfs_path : e) || '') === vfsScript)) syncIn.push({ source_path: vfsScript, target_path: vfsScript });
+      scriptPath = _wcNativePath(vfsScript, '/script.js');
+    }
+    const syncInResult = await _syncVfsToWebContainer(wc, syncIn, { allowRootSync, maxFiles: NODEEXEC_MAX_SYNC_FILES, maxBytes: NODEEXEC_MAX_SYNC_BYTES });
+    if (hasCode) {
+      const moduleType = input.module_type === 'commonjs' ? 'commonjs' : 'module';
+      scriptPath = `${NODEEXEC_RUN_DIR}/run-${Date.now()}-${Math.random().toString(36).slice(2)}.${moduleType === 'commonjs' ? 'cjs' : 'mjs'}`;
+      await _wcWriteFile(wc, scriptPath, { binary: false, content: input.code }, true);
+    }
+    const args = Array.isArray(input.args) ? input.args.map(String) : [];
+    const cwd = _wcNativePath(input.cwd || '/', '/');
+    const env = input.env && typeof input.env === 'object' ? Object.fromEntries(Object.entries(input.env).map(([k, v]) => [String(k), String(v)])) : undefined;
+    const command = ['node', scriptPath, ...args];
+    const proc = await wc.spawn('node', [scriptPath, ...args], { cwd, ...(env ? { env } : {}) });
+    const outputPromise = _collectWebContainerProcessOutput(proc);
+    let timedOut = false;
+    const exitPromise = proc.exit;
+    let timeoutId = null;
+    const timeoutPromise = new Promise(resolve => { timeoutId = setTimeout(() => { timedOut = true; try { proc.kill?.(); } catch {} resolve('timeout'); }, timeoutMs); });
+    const exitCode = await Promise.race([exitPromise, timeoutPromise]);
+    if (timeoutId) clearTimeout(timeoutId);
+    const output = _truncateNodeOutput((await outputPromise).join(''));
+    if (timedOut || exitCode === 'timeout') return `Error: NodeExec timed out after ${timeoutMs}ms.\n\n${_nodeExecSummary('Synced into WebContainer', syncInResult)}\n\nCommand:\n${command.join(' ')}\n\nOutput:\n${output || '(no output)'}`;
+    const syncOutResult = await _syncWebContainerToVfs(wc, syncOut, { allowRootSync, maxFiles: NODEEXEC_MAX_SYNC_FILES, maxBytes: NODEEXEC_MAX_SYNC_BYTES });
+    const header = exitCode === 0 ? `NodeExec completed with exit code ${exitCode}.` : `Error: NodeExec exited with code ${exitCode}.`;
+    return `${header}\n\n${_nodeExecSummary('Synced into WebContainer', syncInResult)}\n\nCommand:\n${command.join(' ')}\n\nOutput:\n${output || '(no output)'}\n\n${_nodeExecSummary('Synced back to VFS', syncOutResult)}`;
+  } catch (e) {
+    return `Error: ${e.message || e}`;
   }
 }
 
@@ -8530,6 +8819,7 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'Bash', description: 'Execute a simulated bash command against the virtual filesystem. Supports: ls, cat, find, echo, mkdir, rm, pwd, cd, tree, head, tail, wc, cp, mv, touch, grep.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Bash command' } }, required: ['command'] } },
   { name: 'PythonExec', description: 'Execute Python code in an in-browser Pyodide WASM runtime. Use normal shared paths directly (for example /src/main.py, /skills/name/SKILL.md, /outputs/result.txt). Python file access is bridged through workspacefs to the shared browser filesystem — there is no separate project copy to sync later. For text and ordinary path-based APIs, use open(...), pathlib.Path(...), os.path.exists(...), glob.glob(...). For binary files, prefer workspacefs.read_bytes(...) and workspacefs.write_bytes(...). If a library requires a real native temp path, first call workspacefs.materialize_to_tmp(...), then write results back with workspacefs.persist_tmp_file(...). Examples: pathlib.Path("/out.txt").write_text("ok"); data = workspacefs.read_bytes("/in.bin"); workspacefs.write_bytes("/out.bin", data); tmp_in = workspacefs.materialize_to_tmp("/in.pptx", binary=True); workspacefs.persist_tmp_file("/tmp/out.pptx", "/outputs/out.pptx", binary=True).', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Python code to execute. Preferred file strategy: use normal shared paths directly; use workspacefs.read_bytes/write_bytes for binary data; use workspacefs.materialize_to_tmp(...) and workspacefs.persist_tmp_file(...) only when a library requires a native /tmp path. Minimal examples: pathlib.Path("/out.txt").write_text("ok"), workspacefs.write_bytes("/out.bin", workspacefs.read_bytes("/in.bin")), tmp = workspacefs.materialize_to_tmp("/in.pptx", binary=True).' }, packages: { type: 'array', items: { type: 'string' }, description: 'Pure-Python packages to install via micropip' } }, required: ['code'] } },
   { name: 'JSExec', description: 'Execute JavaScript code in an in-browser sandbox. Has direct access to the virtual filesystem via vfsRead/vfsWrite for text, async vfsReadBinary/vfsWriteBinary for binary data (use await), vfsStat for metadata, plus vfsGlob/vfsGrep. Can use fetch() for HTTP requests and console.log for output.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'JavaScript code to execute. Wrap top-level awaits by returning an async IIFE or a Promise. Available APIs: vfsRead(path), vfsWrite(path,content), await vfsReadBinary(path), await vfsWriteBinary(path,bytes), vfsStat(path), vfsGlob(pattern), vfsGrep(pattern,path), fetch().' } }, required: ['code'] } },
+  { name: 'NodeExec', description: 'Execute Node.js-compatible JavaScript in a browser WebContainer. Unlike JSExec, this runs in a Node-like runtime with Node APIs. Requires HTTPS/localhost and cross-origin isolation. The WebContainer filesystem is separate from the VFS: use sync_in to copy selected VFS files/directories before execution and sync_out to copy selected outputs back.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Inline Node.js code to execute. Mutually exclusive with script_path.' }, script_path: { type: 'string', description: 'VFS path to a JavaScript file to run with node. The script file is synced automatically if not already included in sync_in.' }, module_type: { type: 'string', enum: ['module', 'commonjs'], description: 'For inline code only. Defaults to module.' }, args: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to the Node script.' }, cwd: { type: 'string', description: 'Working directory inside the WebContainer. Defaults to /.' }, env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables for the process.' }, timeout_ms: { type: 'integer', description: 'Execution timeout in milliseconds. Defaults to 10000 and is capped at 60000.' }, sync_in: { type: 'array', items: { type: 'object', properties: { source_path: { type: 'string' }, target_path: { type: 'string' }, overwrite: { type: 'boolean' }, include: { type: 'string' }, exclude: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, max_files: { type: 'integer' }, max_bytes: { type: 'integer' } }, required: ['source_path'] }, description: 'Explicit VFS files/directories to copy into WebContainer before execution.' }, sync_out: { type: 'array', items: { type: 'object', properties: { source_path: { type: 'string' }, target_path: { type: 'string' }, overwrite: { type: 'boolean' }, binary: { type: 'boolean' }, include: { type: 'string' }, exclude: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, max_files: { type: 'integer' }, max_bytes: { type: 'integer' } }, required: ['source_path'] }, description: 'Explicit WebContainer files/directories to copy back into VFS after execution.' }, allow_root_sync: { type: 'boolean', description: 'Allow syncing / as a source. Defaults to false for safety.' } } } },
   { name: 'WebSearch', description: 'Search the web using Tavily AI. Returns titles, URLs, and content snippets for relevant results. Requires a Tavily API key configured in the Web Search panel on the right sidebar.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, search_depth: { type: 'string', enum: ['basic', 'advanced'], description: 'Search depth: basic (fast) or advanced (thorough). Defaults to panel setting.' }, max_results: { type: 'integer', description: 'Maximum results to return (1-10). Defaults to panel setting.' }, include_domains: { type: 'array', items: { type: 'string' }, description: 'Restrict results to these domains (optional).' }, exclude_domains: { type: 'array', items: { type: 'string' }, description: 'Exclude these domains from results (optional).' } }, required: ['query'] } },
   { name: 'Fetch', description: 'Fetch a webpage by URL and return readable page content. Useful for retrieving the contents of a specific web page.', input_schema: { type: 'object', properties: { url: { type: 'string', description: 'HTTP or HTTPS URL to fetch' }, max_chars: { type: 'integer', description: 'Maximum number of characters to return from the cleaned page text. Default 12000.' } }, required: ['url'] } },
   { name: 'GenerateImage', description: 'Generate an image from a text prompt, or edit/transform attached images when input_image_paths is provided. Use this directly in normal chat when the user asks for image generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete image prompt or edit instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths to use for image-to-image editing or variation.' }, model: { type: 'string', description: 'Optional image model override. Defaults to the provider default image model.' } }, required: ['prompt'] } },
@@ -8692,7 +8982,7 @@ function rebuildToolDefs(headId = activeEntryId) {
 }
 
 function renderToolsGrid() {
-  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film' };
+  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film' };
   const el = document.getElementById('toolsGrid');
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
@@ -8705,7 +8995,7 @@ function renderToolsGrid() {
 // TOOL IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════
 // Plan Mode: writes are blocked, read-only tools and meta-tools are allowed.
-const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'VfsToPyodide', 'PyodideToVfs', 'JSExec']);
+const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'VfsToPyodide', 'PyodideToVfs', 'JSExec', 'NodeExec']);
 
 async function executeTool(name, input) {
   try {
@@ -8728,6 +9018,7 @@ async function executeTool(name, input) {
       case 'VfsToPyodide': return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'PyodideToVfs': return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'JSExec': return await toolJSExec(input);
+      case 'NodeExec': return await toolNodeExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
       case 'GenerateImage': return hasConfiguredDefaultMediaModel('image') ? await toolGenerateImage(input) : `Error: ${t('media.noModel')}`;
@@ -10228,7 +10519,7 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
   }
 }
 async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
-  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const mediaToolPrompt = getMediaToolPrompt();
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const memPrompt = await memRecallForPrompt(messages);
@@ -10482,9 +10773,13 @@ function _extractToolContent(toolName, partialJson) {
     }
   }
 
-  if (toolName === 'PythonExec' || toolName === 'JSExec') {
+  if (toolName === 'PythonExec' || toolName === 'JSExec' || toolName === 'NodeExec') {
     const val = extractPartialStringField('code');
     if (val != null) return val;
+    if (toolName === 'NodeExec') {
+      const script = extractPartialStringField('script_path');
+      if (script != null) return script;
+    }
   }
 
   if (toolName === 'Bash') {
@@ -10586,8 +10881,8 @@ async function _runAgentLoop(userText, options = {}) {
         if (_toolMap[toolIndex]) return;
         const entry = { name: block.name, json: '', el: null };
         const el = document.createElement('div'); el.className = 'tool-card streaming';
-        const supportsCollapse = block.name === 'Write' || block.name === 'Edit' || block.name === 'PythonExec' || block.name === 'JSExec';
-        const summaryText = block.name === 'PythonExec' ? 'generating python code…' : block.name === 'JSExec' ? 'generating javascript code…' : block.name === 'Write' ? 'generating file content…' : block.name === 'Edit' ? 'generating replacement content…' : 'generating…';
+        const supportsCollapse = block.name === 'Write' || block.name === 'Edit' || block.name === 'PythonExec' || block.name === 'JSExec' || block.name === 'NodeExec';
+        const summaryText = block.name === 'PythonExec' ? 'generating python code…' : block.name === 'JSExec' ? 'generating javascript code…' : block.name === 'NodeExec' ? 'generating node code…' : block.name === 'Write' ? 'generating file content…' : block.name === 'Edit' ? 'generating replacement content…' : 'generating…';
         el.innerHTML = `<div class="tool-header" onclick="toggleToolCard(this.parentElement)"><span class="tool-name">${esc(block.name)}</span><span class="tool-summary" style="color:var(--accent-orange)">${summaryText}</span>${supportsCollapse ? '<button class="tool-toggle-btn" onclick="onToolToggleButtonClick(this,event)">Collapse</button>' : ''}<span class="tool-arrow open">\u25BC</span><span class="streaming-cursor" style="margin-left:4px"></span></div><div class="tool-body show"><div class="tool-output"><pre class="tool-pre" style="max-height:300px;overflow-y:auto"></pre></div></div>`;
         msgEl.appendChild(el); scrollBottom();
         entry.el = el;
@@ -10943,8 +11238,8 @@ async function appendMediaResultOnly(msgEl, out) {
 function appendToolCard(msgEl, tu, out, isErr, existingEl = null) {
   const c = existingEl || document.createElement('div');
   c.className = 'tool-card' + (isErr ? ' error' : '');
-  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt }[tu.name] || '';
-  const supportsCollapse = tu.name === 'Write' || tu.name === 'Edit' || tu.name === 'PythonExec' || tu.name === 'JSExec';
+  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt }[tu.name] || '';
+  const supportsCollapse = tu.name === 'Write' || tu.name === 'Edit' || tu.name === 'PythonExec' || tu.name === 'JSExec' || tu.name === 'NodeExec';
   const mediaResult = !isErr && parseMediaToolResult(out);
   const displayOut = mediaResult ? stripMediaToolMarker(out) : out;
   c.innerHTML = `<div class="tool-header" onclick="toggleToolCard(this.parentElement)"><span class="tool-name">${esc(tu.name)}</span><span class="tool-summary">${esc(sum)}</span>${supportsCollapse ? '<button class="tool-toggle-btn" onclick="onToolToggleButtonClick(this,event)">Expand</button>' : ''}<span class="tool-arrow">\u25BC</span></div><div class="tool-body"><div class="tool-input"><div class="tool-label">Input</div><pre class="tool-pre">${esc(JSON.stringify(tu.input,null,2))}</pre></div><div class="tool-output"><div class="tool-label">Output</div><pre class="tool-pre">${esc(typeof displayOut==='string'?displayOut:JSON.stringify(displayOut,null,2))}</pre></div></div>`;
