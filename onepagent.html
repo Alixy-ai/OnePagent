@@ -10911,7 +10911,7 @@ async function appendToolResultMarkdown(lines, block, embedImages) {
   lines.push('');
 }
 async function formatConversationForExport(options = {}) {
-  const { embedImages = true } = options;
+  const { embedImages = false } = options;
   const lines = [];
   lines.push(`# ${getExportDisplayTitle()}`);
   lines.push('');
@@ -10929,8 +10929,12 @@ async function formatConversationForExport(options = {}) {
           if (block.type === 'tool_result') await appendToolResultMarkdown(lines, block, embedImages);
           else if (block.type === 'text') lines.push(block.text || '');
           else if (block.type === 'image') {
-            const md = formatUserImageBlockForMarkdown(block);
-            lines.push(md || t('export.imageUnavailable'));
+            if (embedImages) {
+              const md = formatUserImageBlockForMarkdown(block);
+              lines.push(md || t('export.imageUnavailable'));
+            } else {
+              lines.push(t('export.attachedImage'));
+            }
           }
         }
         lines.push('');
@@ -11062,7 +11066,7 @@ async function downloadAll(format = 'markdown') {
   if (!conversation.length) { alert(t('export.noConversation')); return; }
   const title = getExportSafeTitle();
   if (format === 'pdf') { await exportConversationPdf(title); return; }
-  downloadBlob(await formatConversationForExport({ embedImages: true }), `${title}.md`, 'text/markdown;charset=utf-8');
+  downloadBlob(await formatConversationForExport({ embedImages: false }), `${title}.md`, 'text/markdown;charset=utf-8');
 }
 
 function downloadBlob(c, fn, type = 'text/plain;charset=utf-8') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([c], { type })); a.download = fn; a.click(); URL.revokeObjectURL(a.href); }
