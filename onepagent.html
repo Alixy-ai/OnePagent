@@ -11456,45 +11456,6 @@ async function _runAgentLoop(userText, options = {}) {
   const memoryRecallKey = String(promptEntryId || stableStringHash(userText || ''));
   abortCtrl = new AbortController();
   try {
-    const autoMediaKind = shouldAutoGenerateMedia(userText);
-    if (autoMediaKind) {
-      const toolName = autoMediaKind === 'video' ? 'GenerateVideo' : 'GenerateImage';
-      const imagePaths = (options.fileList || []).filter(fp => {
-        const node = vfsResolve(fp);
-        const ext = String(fp || '').split('.').pop().toLowerCase();
-        return node?.binary && IMAGE_EXTS.has(ext);
-      });
-      setStatus('running', t('status.thinking'));
-      const mediaPrompt = await generateMediaPromptWithAI(userText, autoMediaKind, promptEntryId);
-      const tu = makeToolUseBlock(toolName, { prompt: mediaPrompt, ...(imagePaths.length ? { input_image_paths: imagePaths } : {}) });
-      const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: [tu], promptEntryId });
-      rebuildConversation();
-      const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
-      textEl.remove();
-      reasoningEl?.remove();
-      msgEl.dataset.userText = userText;
-      msgEl.dataset.promptIndex = String(promptIndex);
-      msgEl.dataset.promptEntryId = promptEntryId || '';
-      msgEl.dataset.tokenBase = String(tokenBase);
-      msgEl.dataset.loopBase = String(loopBase);
-      msgEl.dataset.assistantEntryId = assistantEntry.id;
-      const progressEl = createMediaRenderProgress(autoMediaKind);
-      msgEl.appendChild(progressEl);
-      setStatus('running', t('media.generating'));
-      let out;
-      try {
-        out = await executeTool(tu.name, tu.input);
-      } finally {
-        removeMediaRenderProgress(progressEl);
-      }
-      const isErr = typeof out === 'string' && out.startsWith('Error:');
-      if (isErr || !(await appendMediaResultOnly(msgEl, out))) appendToolCard(msgEl, tu, out, isErr);
-      appendSessionEntry('tool_result', { content: PROVIDER === 'anthropic_compat' ? [{ type: 'tool_result', tool_use_id: tu.id, content: out, is_error: isErr || undefined }] : [{ type: 'tool_result', tool_use_id: tu.id, content: out }], promptEntryId });
-      rebuildConversation();
-      updateMemoryUI();
-      saveCurrentConv(true);
-      return;
-    }
     while (true) {
       loopCount++; updateMemoryUI();
       await checkAndCompact();
