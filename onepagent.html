@@ -3151,6 +3151,25 @@ let contextBreakdownExpanded = false;
 let _contextSnapshotSeq = 0;
 let _contextUiRefreshTimer = null;
 let currentViewFile = null;
+const ANTHROPIC_PROMPT_CACHE_ENABLED = true;
+const ANTHROPIC_PROMPT_CACHE_CONTROL = { type: 'ephemeral' };
+const memRecallPromptCache = new Map();
+const microCompactCache = new Map();
+function stableStringHash(value) {
+  const text = String(value || '');
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+function rememberBoundedMapValue(map, key, value, maxEntries = 50) {
+  const k = String(key || 'default');
+  map.set(k, value);
+  while (map.size > maxEntries) map.delete(map.keys().next().value);
+  return value;
+}
 
 function genEntryId() { return 'entry_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function appendSessionEntry(type, payload = {}) {
@@ -8599,12 +8618,19 @@ function memRank(records, queryText, { limit = 8, now = Date.now() } = {}) {
     for (const q of qTokens) if (cTokens.has(q)) kwHits++;
     const kwOverlap = qTokens.size ? kwHits / qTokens.size : 0;
     const pinnedBoost = rec.pinned ? 0.25 : 0;
-    const recallBoost = Math.min(0.15, (rec.recallCount || 0) * 0.02);
-    const score = 0.5 * recency + 0.3 * tagOverlap + 0.2 * kwOverlap + pinnedBoost + recallBoost;
+    const score = 0.5 * recency + 0.3 * tagOverlap + 0.2 * kwOverlap + pinnedBoost;
     return { rec, score, tagHits, kwHits };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
+}
+
+async function getCachedMemRecallForPrompt(messages, options = {}) {
+  const key = String(options.memoryRecallKey || _memQueryFromMessages(messages) || 'default');
+  if (memRecallPromptCache.has(key)) return memRecallPromptCache.get(key) || '';
+  const prompt = await memRecallForPrompt(messages, { readOnly: !!options.readOnly });
+  if (!options.readOnly) rememberBoundedMapValue(memRecallPromptCache, key, prompt || '', 50);
+  return prompt || '';
 }
 
 async function memRecallForPrompt(messages, options = {}) {
@@ -8626,7 +8652,7 @@ async function memRecallForPrompt(messages, options = {}) {
     const now = Date.now();
     const lines = picked.map(({ rec }) => {
       const tagStr = (rec.tags || []).map(t => '#' + t).join(' ');
-      const header = '[' + _memDateLabel(rec.createdAt) + ', ' + _memRelativeLabel(rec.createdAt, now) + (tagStr ? ', ' + tagStr : '') + (rec.pinned ? ', pinned' : '') + ']';
+      const header = '[' + _memDateLabel(rec.createdAt) + (tagStr ? ', ' + tagStr : '') + (rec.pinned ? ', pinned' : '') + ']';
       return '- ' + header + ' ' + rec.content;
     });
     if (!options.readOnly) {
@@ -10651,26 +10677,32 @@ function compactLargeToolResultContent(content, metadata = {}) {
 function microCompactProjectedMessages(messages, options = {}) {
   if (!Array.isArray(messages)) return [];
   const protect = Number.isFinite(options.protectRecent) ? options.protectRecent : CONTEXT_RECENT_MESSAGE_PROTECT_COUNT;
+  const minAgeFromEnd = Number.isFinite(options.minAgeFromEnd) ? options.minAgeFromEnd : Math.max(protect, CONTEXT_RECENT_MESSAGE_PROTECT_COUNT + 4);
   const minTokens = Number.isFinite(options.minTokens) ? options.minTokens : CONTEXT_MICRO_COMPACT_MIN_TOKENS;
+  const maxChars = options.maxChars || 1800;
   return messages.map((message, index) => {
     const ageFromEnd = messages.length - index - 1;
-    if (ageFromEnd < protect || !Array.isArray(message?.content)) return message;
+    if (ageFromEnd < minAgeFromEnd || !Array.isArray(message?.content)) return message;
     let changed = false;
     const content = message.content.map(block => {
       if (block?.type !== 'tool_result') return block;
       const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
+      if (text.startsWith('[Tool output compacted]')) return block;
       const tokens = estimateTokenCountFromText(text);
       if (tokens < minTokens && !/^data:/i.test(text) && !/^[A-Za-z0-9+/=]{4000,}$/.test(text.slice(0, 5000))) return block;
+      const cacheKey = `${block.tool_use_id || ''}:${stableStringHash(text)}:${maxChars}`;
+      let compacted = microCompactCache.get(cacheKey);
+      if (!compacted) compacted = rememberBoundedMapValue(microCompactCache, cacheKey, compactLargeToolResultContent(block.content, { maxChars }), 200);
       changed = true;
-      return { ...block, content: compactLargeToolResultContent(block.content, { maxChars: options.maxChars || 1800 }) };
+      return { ...block, content: compacted };
     });
     return changed ? { ...message, content } : message;
   });
 }
-function normalizeProjectedMessages(messages, provider = PROVIDER) {
+function normalizeProjectedMessages(messages, provider = PROVIDER, options = {}) {
   const normalized = [];
   const seenToolCalls = new Set();
-  for (const original of microCompactProjectedMessages(messages || [])) {
+  for (const original of microCompactProjectedMessages(messages || [], options.microCompact || {})) {
     if (!original || !original.role) continue;
     const message = { ...original };
     if (Array.isArray(message.content)) {
@@ -10697,27 +10729,61 @@ function normalizeProjectedMessages(messages, provider = PROVIDER) {
   return normalized;
 }
 async function collectRequestContextParts(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
-  const projectedMessages = normalizeProjectedMessages(messages, PROVIDER);
+  const projectedMessagesBase = normalizeProjectedMessages(messages, PROVIDER, { microCompact: options.microCompact || {} });
   const contextEditor = document.getElementById('contextEditor')?.value || '';
   const activeSkillMetadata = getActiveSkillMetadataPrompts();
   const triggeredSkillPrompts = getTriggeredSkillPrompts(headId);
-  const beijingTime = getBeijingTimeStr();
+  const runtimeReminder = getBeijingTimeStr();
+  const beijingTime = runtimeReminder;
+  const projectedMessages = appendRuntimeReminderMessage(projectedMessagesBase, runtimeReminder);
   const mediaToolPrompt = getMediaToolPrompt();
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
-  const memPrompt = await memRecallForPrompt(projectedMessages, { readOnly: !!options.readOnlyMemory });
+  const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
-  const systemPrompt = contextEditor + activeSkillMetadata + triggeredSkillPrompts + beijingTime + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
-  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, mediaToolPrompt, pyodideNativePrompt, planPrompt, memPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+  const stableSystemPrompt = contextEditor + activeSkillMetadata;
+  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
+  const systemPrompt = stableSystemPrompt + volatileSystemPrompt;
+  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+}
+function buildAnthropicSystemForCache(parts) {
+  const blocks = [];
+  const stable = parts.stableSystemPrompt || '';
+  const volatile = parts.volatileSystemPrompt || '';
+  if (stable) {
+    const block = { type: 'text', text: stable };
+    if (ANTHROPIC_PROMPT_CACHE_ENABLED) block.cache_control = { ...ANTHROPIC_PROMPT_CACHE_CONTROL };
+    blocks.push(block);
+  }
+  if (volatile) blocks.push({ type: 'text', text: volatile });
+  return blocks.length ? blocks : '';
+}
+function stripCacheControlDeep(value) {
+  if (Array.isArray(value)) return value.map(stripCacheControlDeep);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) if (k !== 'cache_control') out[k] = stripCacheControlDeep(v);
+    return out;
+  }
+  return value;
+}
+function downgradeAnthropicCompatBody(body) {
+  const clone = stripCacheControlDeep(body);
+  if (Array.isArray(clone.system)) clone.system = clone.system.map(block => typeof block === 'string' ? block : (block?.text || '')).filter(Boolean).join('');
+  return clone;
+}
+function looksLikeCacheControlCompatError(status, text) {
+  const s = String(text || '').toLowerCase();
+  return status === 400 && (s.includes('cache_control') || s.includes('cache control') || (s.includes('system') && (s.includes('array') || s.includes('text block') || s.includes('object'))));
 }
 function assembleRequestBodyFromParts(parts) {
   if (PROVIDER === 'anthropic_compat') {
     const body = {
       model: API_MODEL,
       max_tokens: ANTHROPIC_MAX_TOKENS,
-      system: parts.systemPrompt,
+      system: buildAnthropicSystemForCache(parts),
       messages: parts.projectedMessages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
       tools: parts.anthropicTools
     };
@@ -10767,12 +10833,9 @@ function assembleRequestBodyFromParts(parts) {
   return applyThinkingToRequestBody({ model: API_MODEL, messages: oai, tools: parts.openaiTools }, PROVIDER);
 }
 function estimateContextPartTokens(parts, body) {
-  const runtime = parts.beijingTime + parts.mediaToolPrompt + parts.pyodideNativePrompt + parts.planPrompt;
   const breakdown = {
-    system: estimateTokenCountFromText(parts.contextEditor || ''),
-    skills: estimateTokenCountFromText((parts.activeSkillMetadata || '') + (parts.triggeredSkillPrompts || '')),
-    memory: estimateTokenCountFromText(parts.memPrompt || ''),
-    runtime: estimateTokenCountFromText(runtime || ''),
+    stableSystem: estimateTokenCountFromText(parts.stableSystemPrompt || ''),
+    volatileSystem: estimateTokenCountFromText(parts.volatileSystemPrompt || ''),
     messages: (parts.projectedMessages || []).reduce((sum, msg) => sum + estimateMessageTokens(msg), 0),
     tools: estimateAnyTokenCount(PROVIDER === 'anthropic_compat' ? parts.anthropicTools : parts.openaiTools)
   };
@@ -10782,7 +10845,7 @@ function estimateContextPartTokens(parts, body) {
   return { breakdown, total: Math.max(totalFromBody, totalFromParts) };
 }
 async function buildContextSnapshot(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
-  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: true, skipToolRender: true });
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: true, skipToolRender: true, memoryRecallKey: options.memoryRecallKey });
   const body = assembleRequestBodyFromParts(parts);
   const estimated = estimateContextPartTokens(parts, body);
   const maxContextTokens = Math.max(1, Number(currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
@@ -10842,8 +10905,8 @@ function renderContextBreakdown(snapshot = lastRequestContextSnapshot) {
   const pct = Math.min(999, Math.max(0, snapshot.fillRatio * 100));
   const summary = `Context: ${pct.toFixed(0)}% · ${formatTokenCount(snapshot.totalEstimatedTokens)} / ${formatTokenCount(snapshot.maxContextTokens)}`;
   const detailLines = [
-    `Messages: ${formatTokenCount(b.messages)} · System: ${formatTokenCount(b.system)} · Tools: ${formatTokenCount(b.tools)}`,
-    `Skills: ${formatTokenCount(b.skills)} · Memory: ${formatTokenCount(b.memory)} · Runtime: ${formatTokenCount(b.runtime)}`,
+    `Messages: ${formatTokenCount(b.messages)} · Stable system: ${formatTokenCount(b.stableSystem)} · Volatile system: ${formatTokenCount(b.volatileSystem)}`,
+    `Tools: ${formatTokenCount(b.tools)} · Other: ${formatTokenCount(b.other)}`,
     `Session: ${formatTokenCount(totalTokens)} · Last turn: ${formatTokenCount(lastTurnTokens)}`
   ];
   let box = el.querySelector('[data-context-breakdown]');
@@ -11004,10 +11067,17 @@ function getBeijingTimeStr() {
     timeZone: 'Asia/Shanghai',
     year: 'numeric', month: '2-digit', day: '2-digit',
     weekday: 'long',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour: '2-digit', minute: '2-digit',
     hour12: false
   });
-  return `\n\n[当前北京时间 (UTC+8): ${bjStr}]`;
+  return `<system-reminder>\n当前北京时间 (UTC+8): ${bjStr}\n</system-reminder>`;
+}
+
+function appendRuntimeReminderMessage(messages, reminderText) {
+  if (!reminderText) return messages;
+  const out = Array.isArray(messages) ? messages.map(m => ({ ...m })) : [];
+  out.push({ role: 'user', content: [{ type: 'text', text: reminderText }] });
+  return out;
 }
 
 function bytesToBase64(bytes) {
@@ -11150,9 +11220,18 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
     return fallback;
   }
 }
-async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
-  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: false });
+async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: false, memoryRecallKey: options.memoryRecallKey });
   return assembleRequestBodyFromParts(parts);
+}
+async function sendLLMRequestBody(body, signal) {
+  const makeOptions = requestBody => ({ method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(requestBody), ...(signal ? { signal } : {}) });
+  const resp = await fetchWithRetry(getLLMUrl(), makeOptions(body));
+  if (PROVIDER !== 'anthropic_compat' || resp.ok) return resp;
+  let errorText = '';
+  try { errorText = await resp.clone().text(); } catch {}
+  if (!looksLikeCacheControlCompatError(resp.status, errorText)) return resp;
+  return await fetchWithRetry(getLLMUrl(), makeOptions(downgradeAnthropicCompatBody(body)));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -11374,6 +11453,7 @@ async function _runAgentLoop(userText, options = {}) {
   const promptIndex = Number.isInteger(options.promptIndex) ? options.promptIndex : findConversationIndexByEntryId(promptEntryId);
   const tokenBase = Number.isFinite(options.tokenBase) ? options.tokenBase : totalTokens;
   const loopBase = Number.isFinite(options.loopBase) ? options.loopBase : loopCount;
+  const memoryRecallKey = String(promptEntryId || stableStringHash(userText || ''));
   abortCtrl = new AbortController();
   try {
     const autoMediaKind = shouldAutoGenerateMedia(userText);
@@ -11419,9 +11499,9 @@ async function _runAgentLoop(userText, options = {}) {
       loopCount++; updateMemoryUI();
       await checkAndCompact();
       const requestMessages = buildConversationFromEntries();
-      const requestSnapshot = await buildContextSnapshot(requestMessages);
+      const requestSnapshot = await buildContextSnapshot(requestMessages, promptEntryId, { memoryRecallKey });
       applyContextSnapshot(requestSnapshot);
-      const body = await buildRequestBody(requestMessages);
+      const body = await buildRequestBody(requestMessages, promptEntryId, { memoryRecallKey });
       let estimatedRequestTokens = requestSnapshot.totalEstimatedTokens || estimateRequestBodyTokens(body);
       body.stream = true;
       if (PROVIDER !== 'anthropic_compat') {
@@ -11438,7 +11518,7 @@ async function _runAgentLoop(userText, options = {}) {
       msgEl.dataset.loopBase = String(loopBase);
       let resp;
       let retriedAfterContextCompact = false;
-      try { resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: abortCtrl.signal }); }
+      try { resp = await sendLLMRequestBody(body, abortCtrl.signal); }
       catch (e) { msgEl.remove(); throw e; }
       if (!resp.ok) {
         const errorText = await resp.text();
@@ -11446,14 +11526,14 @@ async function _runAgentLoop(userText, options = {}) {
           appendSystemMsg('Context length exceeded. Compacting context and retrying once...');
           await compactMemory({ trigger: 'context_error', snapshot: requestSnapshot });
           const retryMessages = buildConversationFromEntries();
-          const retrySnapshot = await buildContextSnapshot(retryMessages);
+          const retrySnapshot = await buildContextSnapshot(retryMessages, promptEntryId, { memoryRecallKey });
           applyContextSnapshot(retrySnapshot);
-          const retryBody = await buildRequestBody(retryMessages);
+          const retryBody = await buildRequestBody(retryMessages, promptEntryId, { memoryRecallKey });
           retryBody.stream = true;
           estimatedRequestTokens = retrySnapshot.totalEstimatedTokens || estimateRequestBodyTokens(retryBody);
           retriedAfterContextCompact = true;
           if (PROVIDER !== 'anthropic_compat') retryBody.stream_options = { ...(retryBody.stream_options || {}), include_usage: true };
-          resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(retryBody), signal: abortCtrl.signal });
+          resp = await sendLLMRequestBody(retryBody, abortCtrl.signal);
           if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
         } else {
           msgEl.remove();
