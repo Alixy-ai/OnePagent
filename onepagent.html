@@ -858,8 +858,10 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .file-viewer-overlay.image-mode { inset: 0; width: 100vw; height: 100vh; background: rgba(5,6,14,0.96); border-left: none; z-index: 260; }
 .file-viewer-overlay.image-mode .fv-resize-handle { display: none; }
 .file-viewer-overlay.image-mode .fv-content { padding: 0; overflow: hidden; }
-.image-zoom-stage { width: 100%; height: 100%; overflow: auto; display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
-.image-zoom-stage.pannable { align-items: flex-start; justify-content: flex-start; cursor: grab; }
+.image-zoom-stage { width: 100%; height: 100%; overflow: auto; cursor: zoom-in; }
+.image-zoom-inner { min-width: 100%; min-height: 100%; display: flex; align-items: center; justify-content: center; }
+.image-zoom-stage.pannable { cursor: grab; }
+.image-zoom-stage.pannable .image-zoom-inner { align-items: flex-start; justify-content: flex-start; }
 .image-zoom-stage.panning { cursor: grabbing; }
 .image-zoom-img { max-width: none; max-height: none; border-radius: 6px; box-shadow: 0 8px 36px rgba(0,0,0,0.55); transform-origin: center center; user-select: none; }
 .fv-resize-handle { position: absolute; top: 0; left: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 2; }
@@ -10633,16 +10635,21 @@ async function openFileViewer(path) {
 
 function openImageZoomViewer(url, path) {
   const fvContent = document.getElementById('fvContent');
-  fvContent.innerHTML = `<div class="image-zoom-stage" id="imageZoomStage"><img class="image-zoom-img" id="imageZoomImg" src="${url}" alt="${esc(path)}" draggable="false"></div>`;
+  fvContent.innerHTML = `<div class="image-zoom-stage" id="imageZoomStage"><div class="image-zoom-inner" id="imageZoomInner"><img class="image-zoom-img" id="imageZoomImg" src="${url}" alt="${esc(path)}" draggable="false"></div></div>`;
   const stage = document.getElementById('imageZoomStage');
+  const inner = document.getElementById('imageZoomInner');
   const img = document.getElementById('imageZoomImg');
   let scale = 1;
   let dragging = false;
   let dragStartX = 0, dragStartY = 0, scrollStartX = 0, scrollStartY = 0;
   const apply = () => {
-    img.style.width = (img.naturalWidth * scale) + 'px';
-    img.style.height = (img.naturalHeight * scale) + 'px';
-    const pannable = img.naturalWidth * scale > stage.clientWidth || img.naturalHeight * scale > stage.clientHeight;
+    const w = img.naturalWidth * scale;
+    const h = img.naturalHeight * scale;
+    img.style.width = w + 'px';
+    img.style.height = h + 'px';
+    inner.style.width = Math.max(stage.clientWidth, w) + 'px';
+    inner.style.height = Math.max(stage.clientHeight, h) + 'px';
+    const pannable = w > stage.clientWidth || h > stage.clientHeight;
     stage.classList.toggle('pannable', pannable);
   };
   img.onload = () => {
@@ -10653,14 +10660,16 @@ function openImageZoomViewer(url, path) {
   stage.onwheel = e => {
     e.preventDefault();
     const before = scale;
-    const rect = stage.getBoundingClientRect();
-    const x = e.clientX - rect.left + stage.scrollLeft;
-    const y = e.clientY - rect.top + stage.scrollTop;
+    const stageRect = stage.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const anchorX = (e.clientX - imgRect.left) / before;
+    const anchorY = (e.clientY - imgRect.top) / before;
+    const pointerX = e.clientX - stageRect.left;
+    const pointerY = e.clientY - stageRect.top;
     scale = Math.min(8, Math.max(0.05, scale * (e.deltaY < 0 ? 1.12 : 0.89)));
     apply();
-    const ratio = scale / before;
-    stage.scrollLeft = x * ratio - (e.clientX - rect.left);
-    stage.scrollTop = y * ratio - (e.clientY - rect.top);
+    stage.scrollLeft = anchorX * scale - pointerX;
+    stage.scrollTop = anchorY * scale - pointerY;
   };
   stage.onmousedown = e => {
     if (!stage.classList.contains('pannable')) return;
