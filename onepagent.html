@@ -1362,6 +1362,13 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="todosArea"></div>
       </div>
     </div>
+    <!-- Sub-agents -->
+    <div class="panel-section" data-section="sub-agents">
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-bolt"></use></svg></span> <span data-i18n="section.subAgents">SUB-AGENTS</span></span><span id="subAgentCounts" style="flex:none;font-size:10px;color:var(--text-dim);margin-right:6px"></span><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-body">
+        <div id="subAgentsArea"></div>
+      </div>
+    </div>
     <!-- Hooks -->
     <div class="panel-section" data-section="hooks">
       <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-bolt"></use></svg></span> <span data-i18n="section.hooks">HOOKS</span></span><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="event.stopPropagation();openHookModal()" data-i18n="action.addHook">+ Add</button><span class="section-arrow">&#x25BC;</span></div>
@@ -1877,6 +1884,7 @@ const I18N = {
     'section.tools': 'TOOLS',
     'section.webSearch': 'WEB SEARCH',
     'section.todos': 'TODOS',
+    'section.subAgents': 'SUB-AGENTS',
     'section.hooks': 'HOOKS',
     'section.memory': 'CONTEXT',
     // Common actions
@@ -2173,6 +2181,7 @@ const I18N = {
     'section.tools': '工具',
     'section.webSearch': '网页搜索',
     'section.todos': '待办',
+    'section.subAgents': '子代理',
     'section.hooks': '钩子',
     'section.memory': '上下文',
     // Common actions
@@ -3134,9 +3143,16 @@ let activeEntryId = null;
 let isGenerating = false;
 let abortCtrl = null;
 let loopCount = 0;
-// Per-conversation todos (TodoWrite tool) + session-only plan mode flag.
+// Per-conversation todos (TodoWrite tool), sub-agent run metadata, and session-only plan mode flag.
 let todos = [];
+let subAgentRuns = [];
 let planMode = false;
+const SUB_AGENT_TOOL_NAME = 'RunSubAgent';
+const SUB_AGENT_DEFAULT_MAX_STEPS = 4;
+const SUB_AGENT_MAX_STEPS = 8;
+const SUB_AGENT_RESULT_MAX_CHARS = 6000;
+const SUB_AGENT_TOOL_OUTPUT_MAX_CHARS = 12000;
+const SUB_AGENT_ALLOWED_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Fetch', 'WebSearch', 'memory_search']);
 let totalTokens = 0;
 let contextTokens = 0;
 let lastUsageInfo = null;
@@ -3627,7 +3643,7 @@ async function saveCurrentConv(andRenderList) {
   }
   saveConvMeta();
   const html = chatEl.innerHTML;
-  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos, lastUsageInfo, lastInputTokens, lastOutputTokens, lastCacheReadTokens, lastCacheWriteTokens, lastTurnTokens });
+  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos, subAgentRuns, lastUsageInfo, lastInputTokens, lastOutputTokens, lastCacheReadTokens, lastCacheWriteTokens, lastTurnTokens });
   if (andRenderList) renderConvList();
   if (typeof schedulePush === 'function') schedulePush();
 }
@@ -3664,7 +3680,9 @@ function newConversation(skipSave, folderId) {
   contextBreakdownExpanded = false;
   currentViewFile = null;
   todos = [];
+  subAgentRuns = [];
   if (typeof renderTodos === 'function') renderTodos();
+  if (typeof renderSubAgents === 'function') renderSubAgents();
   chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">New conversation. Upload files and type a task to begin.</div></div>';
   // Remount active skills
   for (const s of skills) { if (s.active) mountSkillToVfs(s); }
@@ -3713,7 +3731,9 @@ async function switchConversation(id, skipSave) {
   contextBreakdownExpanded = false;
   currentViewFile = null;
   todos = Array.isArray(data?.todos) ? data.todos : [];
+  subAgentRuns = Array.isArray(data?.subAgentRuns) ? data.subAgentRuns : [];
   if (typeof renderTodos === 'function') renderTodos();
+  if (typeof renderSubAgents === 'function') renderSubAgents();
   if (data?.chatHTML) chatEl.innerHTML = data.chatHTML;
   else chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation loaded.</div></div>';
   await hydrateMediaResultCards(chatEl);
@@ -5731,6 +5751,32 @@ function renderTodos() {
     return `<div class="todo-item" style="display:flex;align-items:flex-start;gap:6px;padding:4px 6px;font-size:11px;border-bottom:1px solid var(--border)">
       <span style="color:${color};flex:none;margin-top:1px">${icon}</span>
       <span style="flex:1;${textStyle};word-break:break-word">${esc(label)}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderSubAgents() {
+  const el = document.getElementById('subAgentsArea');
+  const counts = document.getElementById('subAgentCounts');
+  if (!el) return;
+  if (!subAgentRuns || !subAgentRuns.length) {
+    el.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:6px">No sub-agent runs yet.</div>';
+    if (counts) counts.textContent = '';
+    return;
+  }
+  const running = subAgentRuns.filter(r => r.status === 'running').length;
+  if (counts) counts.textContent = running ? `${running} running` : String(subAgentRuns.length);
+  el.innerHTML = subAgentRuns.slice(-8).reverse().map(r => {
+    const color = r.status === 'completed' ? 'var(--accent-green,#00ff88)' : r.status === 'error' ? 'var(--accent-red)' : r.status === 'aborted' ? 'var(--text-dim)' : 'var(--accent-orange)';
+    const task = truncateMiddleText(r.task || 'Sub-agent', 80).replace(/\s+/g, ' ').trim();
+    const result = truncateMiddleText(r.resultPreview || r.error || '', 120).replace(/\s+/g, ' ').trim();
+    return `<div class="todo-item" style="padding:5px 6px;font-size:11px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;gap:6px;align-items:flex-start">
+        <span style="color:${color};flex:none;margin-top:1px">&#x25CF;</span>
+        <span style="flex:1;word-break:break-word;color:var(--text-primary)">${esc(task)}</span>
+      </div>
+      <div style="color:var(--text-dim);font-size:10px;margin-left:14px">${esc(r.status || 'unknown')} · ${Number(r.steps || 0)} steps</div>
+      ${result ? `<div style="color:var(--text-secondary);font-size:10px;margin-left:14px;margin-top:3px;word-break:break-word">${esc(result)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -9132,6 +9178,7 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'NodeExec', description: 'Execute Node.js-compatible JavaScript in a browser WebContainer. Unlike JSExec, this runs in a Node-like runtime with Node APIs. Requires HTTPS/localhost and cross-origin isolation. The WebContainer filesystem is separate from the VFS: use sync_in to copy selected VFS files/directories before execution and sync_out to copy selected outputs back.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Inline Node.js code to execute. Mutually exclusive with script_path.' }, script_path: { type: 'string', description: 'VFS path to a JavaScript file to run with node. The script file is synced automatically if not already included in sync_in.' }, module_type: { type: 'string', enum: ['module', 'commonjs'], description: 'For inline code only. Defaults to module.' }, args: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to the Node script.' }, cwd: { type: 'string', description: 'Working directory inside the WebContainer. Defaults to /.' }, env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables for the process.' }, timeout_ms: { type: 'integer', description: 'Execution timeout in milliseconds. Defaults to 10000 and is capped at 60000.' }, sync_in: { type: 'array', items: { type: 'object', properties: { source_path: { type: 'string' }, target_path: { type: 'string' }, overwrite: { type: 'boolean' }, include: { type: 'string' }, exclude: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, max_files: { type: 'integer' }, max_bytes: { type: 'integer' } }, required: ['source_path'] }, description: 'Explicit VFS files/directories to copy into WebContainer before execution.' }, sync_out: { type: 'array', items: { type: 'object', properties: { source_path: { type: 'string' }, target_path: { type: 'string' }, overwrite: { type: 'boolean' }, binary: { type: 'boolean' }, include: { type: 'string' }, exclude: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, max_files: { type: 'integer' }, max_bytes: { type: 'integer' } }, required: ['source_path'] }, description: 'Explicit WebContainer files/directories to copy back into VFS after execution.' }, allow_root_sync: { type: 'boolean', description: 'Allow syncing / as a source. Defaults to false for safety.' } } } },
   { name: 'WebSearch', description: 'Search the web using Tavily AI. Returns titles, URLs, and content snippets for relevant results. Requires a Tavily API key configured in the Web Search panel on the right sidebar.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, search_depth: { type: 'string', enum: ['basic', 'advanced'], description: 'Search depth: basic (fast) or advanced (thorough). Defaults to panel setting.' }, max_results: { type: 'integer', description: 'Maximum results to return (1-10). Defaults to panel setting.' }, include_domains: { type: 'array', items: { type: 'string' }, description: 'Restrict results to these domains (optional).' }, exclude_domains: { type: 'array', items: { type: 'string' }, description: 'Exclude these domains from results (optional).' } }, required: ['query'] } },
   { name: 'Fetch', description: 'Fetch a webpage by URL and return readable page content. Useful for retrieving the contents of a specific web page.', input_schema: { type: 'object', properties: { url: { type: 'string', description: 'HTTP or HTTPS URL to fetch' }, max_chars: { type: 'integer', description: 'Maximum number of characters to return from the cleaned page text. Default 12000.' } }, required: ['url'] } },
+  { name: 'RunSubAgent', description: 'Delegate a bounded read-only research task to a nested sub-agent. The sub-agent can inspect files, search, fetch, and summarize, but cannot edit files, execute code, ask the user, use MCP tools, or spawn more sub-agents.', input_schema: { type: 'object', properties: { task: { type: 'string', description: 'Specific task for the sub-agent to perform.' }, context: { type: 'string', description: 'Optional background, constraints, or expected output format.' }, max_steps: { type: 'integer', description: 'Maximum model/tool iterations. Defaults to 4 and is capped at 8.' } }, required: ['task'] } },
   { name: 'GenerateImage', description: 'Generate an image from a text prompt, or edit/transform attached images when input_image_paths is provided. Use this directly in normal chat when the user asks for image generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete image prompt or edit instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths to use for image-to-image editing or variation.' }, model: { type: 'string', description: 'Optional image model override. Defaults to the provider default image model.' } }, required: ['prompt'] } },
   { name: 'GenerateVideo', description: 'Generate a video from a text prompt, or from an attached image plus prompt when input_image_paths is provided. Use this directly in normal chat when the user asks for video generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete video prompt or animation instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths; the first valid image is used for image-to-video.' }, model: { type: 'string', description: 'Optional video model override. Defaults to the provider default video model.' } }, required: ['prompt'] } },
   { name: 'TodoWrite', description: 'Maintain a user-visible task list for the current session. Use this proactively on multi-step work so the user can track progress. Each todo has: content (imperative form, e.g. "Run tests"), activeForm (present continuous, e.g. "Running tests"), status (pending | in_progress | completed). Exactly one task should be in_progress at a time. Update the full list on every change; this tool overwrites the prior list.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string', description: 'Imperative description of the task.' }, activeForm: { type: 'string', description: 'Present-continuous description shown while in progress.' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Task status.' } }, required: ['content', 'activeForm', 'status'] } } }, required: ['todos'] } },
@@ -9293,7 +9340,7 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
 }
 
 function renderToolsGrid() {
-  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film', AskUser: 'i:message-circle' };
+  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', RunSubAgent: 'i:bolt', GenerateImage: 'i:image', GenerateVideo: 'i:film', AskUser: 'i:message-circle' };
   const el = document.getElementById('toolsGrid');
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
@@ -9332,6 +9379,7 @@ async function executeTool(name, input) {
       case 'NodeExec': return await toolNodeExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
+      case 'RunSubAgent': return await toolRunSubAgent(input);
       case 'GenerateImage': return hasConfiguredDefaultMediaModel('image') ? await toolGenerateImage(input) : `Error: ${t('media.noModel')}`;
       case 'GenerateVideo': return hasConfiguredDefaultMediaModel('video') ? await toolGenerateVideo(input) : `Error: ${t('media.noModel')}`;
       case 'TodoWrite': return toolTodoWrite(input);
@@ -9352,6 +9400,124 @@ async function executeTool(name, input) {
         return `Unknown tool: ${name}`;
     }
   } catch (e) { return `Error: ${e.message}`; }
+}
+
+function genSubAgentRunId() {
+  return 'sub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function getSubAgentAllowedToolNames() {
+  const names = new Set(SUB_AGENT_ALLOWED_TOOLS);
+  if (!memIsEnabled()) names.delete('memory_search');
+  return names;
+}
+function getSubAgentSystemPrompt() {
+  return `\n\n[SUB-AGENT MODE]\nYou are a bounded read-only sub-agent working on a delegated task. Complete only the delegated task. Use tools only when needed. Do not ask the user questions. Do not attempt to spawn another sub-agent. Do not modify files, execute code, generate media, use MCP tools, or write memory. If Plan Mode is active, only gather information and plan. Return a concise final answer with findings, read-only actions taken, and blockers.`;
+}
+async function buildSubAgentRequestBody(subMessages, headId, options = {}) {
+  const parts = await collectRequestContextParts(subMessages, headId, { readOnlyMemory: true, skipToolRender: true, memoryRecallKey: options.memoryRecallKey, microCompact: options.microCompact || {} });
+  const allowed = getSubAgentAllowedToolNames();
+  parts.anthropicTools = (parts.anthropicTools || []).filter(t => allowed.has(t.name) && t.name !== SUB_AGENT_TOOL_NAME);
+  parts.openaiTools = (parts.openaiTools || []).filter(t => allowed.has(t.function?.name) && t.function?.name !== SUB_AGENT_TOOL_NAME);
+  parts.volatileSystemPrompt = (parts.volatileSystemPrompt || '') + getSubAgentSystemPrompt();
+  parts.systemPrompt = (parts.stableSystemPrompt || '') + parts.volatileSystemPrompt;
+  return assembleRequestBodyFromParts(parts);
+}
+function extractAssistantText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter(b => b?.type === 'text').map(b => b.text || '').join('\n').trim();
+}
+async function executeSubAgentTool(name, input, run) {
+  const allowed = getSubAgentAllowedToolNames();
+  if (name === SUB_AGENT_TOOL_NAME) return { output: 'Error: Sub-agents cannot spawn other sub-agents.', isError: true };
+  if (disabledTools.has(name)) return { output: `Error: Tool "${name}" is disabled.`, isError: true };
+  if (!allowed.has(name)) return { output: `Error: Tool "${name}" is not available to sub-agents.`, isError: true };
+  let out;
+  try { out = await executeTool(name, input || {}); }
+  catch (e) { out = `Error: ${e.message || String(e)}`; }
+  const text = typeof out === 'string' ? out : JSON.stringify(out);
+  const limited = truncateMiddleText(text, SUB_AGENT_TOOL_OUTPUT_MAX_CHARS);
+  run.toolCalls.push({
+    name,
+    inputPreview: truncateMiddleText(JSON.stringify(input || {}), 500),
+    outputPreview: truncateMiddleText(text, 500),
+    isError: text.startsWith('Error:'),
+    at: Date.now()
+  });
+  run.resultPreview = `${name}: ${truncateMiddleText(text, 160).replace(/\s+/g, ' ').trim()}`;
+  renderSubAgents();
+  return { output: limited, isError: limited.startsWith('Error:') };
+}
+async function runSubAgentLoop({ run, task, context, maxSteps }) {
+  const subMessages = [{ role: 'user', content: [
+    { type: 'text', text: ['Delegated task:', task, '', 'Additional context:', context || '(none)'].join('\n') }
+  ] }];
+  const memoryRecallKey = `subagent:${run.id}`;
+  let finalText = '';
+  for (let step = 1; step <= maxSteps; step++) {
+    run.steps = step;
+    renderSubAgents();
+    const body = await buildSubAgentRequestBody(subMessages, activeEntryId, { memoryRecallKey });
+    body.stream = true;
+    if (PROVIDER !== 'anthropic_compat') body.stream_options = { ...(body.stream_options || {}), include_usage: true };
+    const resp = await sendLLMRequestBody(body, abortCtrl?.signal);
+    if (!resp.ok) return { ok: false, text: `Sub-agent API Error (${resp.status}): ${(await resp.text()).slice(0, 500)}`, steps: step };
+    const reader = resp.body.getReader();
+    const result = PROVIDER === 'anthropic_compat'
+      ? await parseAnthropicStream(reader, () => {}, () => {}, () => {}, () => {})
+      : await parseOpenAIStream(reader, () => {}, () => {}, () => {}, () => {}, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
+    if (result.stream_error) return { ok: false, text: `Sub-agent stream interrupted: ${result.stream_error}`, steps: step };
+    subMessages.push({ role: 'assistant', content: result.content });
+    finalText = extractAssistantText(result.content) || finalText;
+    const toolUses = (result.content || []).filter(b => b.type === 'tool_use');
+    if (!toolUses.length || result.stop_reason !== 'tool_use') return { ok: true, text: finalText || '(Sub-agent completed without text output.)', steps: step };
+    const toolResults = [];
+    for (const tu of toolUses) {
+      const toolResult = await executeSubAgentTool(tu.name, tu.input, run);
+      toolResults.push(PROVIDER === 'anthropic_compat'
+        ? { type: 'tool_result', tool_use_id: tu.id, content: toolResult.output, is_error: toolResult.isError || undefined }
+        : { type: 'tool_result', tool_use_id: tu.id, content: toolResult.output });
+    }
+    subMessages.push({ role: 'user', content: toolResults });
+  }
+  return { ok: false, text: `Sub-agent reached the ${maxSteps}-step limit.\n\n${finalText || 'No final answer was produced.'}`, steps: maxSteps };
+}
+function formatSubAgentToolResult(run, result) {
+  return [
+    `Sub-agent ${result.ok ? 'completed' : 'stopped'}.`,
+    `Run ID: ${run.id}`,
+    `Steps: ${result.steps}`,
+    '',
+    truncateMiddleText(result.text || '(no result)', SUB_AGENT_RESULT_MAX_CHARS)
+  ].join('\n');
+}
+async function toolRunSubAgent(input) {
+  const task = String(input?.task || '').trim();
+  if (!task) return 'Error: "task" is required.';
+  const context = String(input?.context || '').trim();
+  const requestedSteps = Number(input?.max_steps);
+  const maxSteps = Math.max(1, Math.min(Number.isFinite(requestedSteps) && requestedSteps > 0 ? Math.floor(requestedSteps) : SUB_AGENT_DEFAULT_MAX_STEPS, SUB_AGENT_MAX_STEPS));
+  const run = { id: genSubAgentRunId(), task: task.slice(0, 2000), context: context.slice(0, 4000), status: 'running', startedAt: Date.now(), finishedAt: null, steps: 0, toolCalls: [], resultPreview: '', error: null };
+  subAgentRuns.push(run);
+  renderSubAgents();
+  saveCurrentConv();
+  try {
+    const result = await runSubAgentLoop({ run, task: run.task, context: run.context, maxSteps });
+    run.status = result.ok ? 'completed' : 'error';
+    run.finishedAt = Date.now();
+    run.steps = result.steps;
+    run.resultPreview = truncateMiddleText(result.text || '', 500);
+    renderSubAgents();
+    saveCurrentConv();
+    return formatSubAgentToolResult(run, result);
+  } catch (e) {
+    run.status = isAbortError(e) ? 'aborted' : 'error';
+    run.finishedAt = Date.now();
+    run.error = e?.message || String(e);
+    renderSubAgents();
+    saveCurrentConv();
+    return `Error: Sub-agent failed: ${run.error}`;
+  }
 }
 
 function toolRead(input) {
@@ -11106,8 +11272,8 @@ function buildAnthropicUserContent(value) {
   if (!Array.isArray(value)) return '';
   const content = [];
   for (const block of value) {
-    if (block.type === 'tool_result') continue;
-    if (block.type === 'text' && typeof block.text === 'string' && block.text) content.push({ type: 'text', text: block.text });
+    if (block.type === 'tool_result') content.push(block);
+    else if (block.type === 'text' && typeof block.text === 'string' && block.text) content.push({ type: 'text', text: block.text });
     else if (block.type === 'image' && block.source?.data && block.source?.media_type) content.push(block);
   }
   return content.length ? content : '';
@@ -11883,7 +12049,7 @@ async function appendMediaResultOnly(msgEl, out) {
 function appendToolCard(msgEl, tu, out, isErr, existingEl = null) {
   const c = existingEl || document.createElement('div');
   c.className = 'tool-card' + (isErr ? ' error' : '');
-  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt, AskUser: tu.input.prompt }[tu.name] || '';
+  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), RunSubAgent: tu.input.task, GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt, AskUser: tu.input.prompt }[tu.name] || '';
   const supportsCollapse = tu.name === 'Write' || tu.name === 'Edit' || tu.name === 'PythonExec' || tu.name === 'JSExec' || tu.name === 'NodeExec';
   const mediaResult = !isErr && parseMediaToolResult(out);
   const displayOut = mediaResult ? stripMediaToolMarker(out) : out;
@@ -12977,6 +13143,7 @@ marked.setOptions({ gfm: true, breaks: true });
   loadWsConfig();
   renderHooks();
   renderTodos();
+  renderSubAgents();
   renderMemoryButton();
   if (memIsEnabled()) { memLoadCache().catch(e => console.warn('Memory cache preload failed', e)); }
   // Connect MCP servers in the background — don't block UI startup on a slow
