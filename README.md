@@ -138,7 +138,9 @@ OnePagent is a pure static site — runs on any static host:
 Back up and sync across devices via any S3-compatible bucket. Configure it in **Settings → Cloud Sync**.
 
 - Supports AWS S3, Cloudflare R2, Backblaze B2, and MinIO.
-- Incremental, content-addressed sync with optional AES-256-GCM encryption.
+- Required fields: Endpoint, Region, Bucket, Access Key ID, and Secret Access Key.
+- Optional: Prefix, AES-256-GCM encryption passphrase, auto-push, and path-style URLs for MinIO / R2.
+- Use **Test connection** / **Show CORS config** in Settings, then **Sync → Push now / Pull now** from the top bar.
 - LLM keys stay device-local and are never synced.
 
 ---

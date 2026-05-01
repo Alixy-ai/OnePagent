@@ -3306,6 +3306,7 @@ function findConversationIndexByEntryId(entryId, headId = activeEntryId) {
 let convHistory = [];
 let convFolders = []; // [{id, name, expanded}]
 let activeConvId = null;
+const _titleGenInFlight = new Set();
 const CONV_DB_NAME = 'ba_conversations';
 const CONV_DB_VER = 2;
 const CONV_STORE = 'data';
@@ -3659,6 +3660,120 @@ function saveConvMeta() {
   saveConvMetaToDB(convHistory);
 }
 
+function getFirstUserQuestionForTitle(conv = conversation) {
+  const first = conv.find(m => m.role === 'user' && getUserTextFromContent(m.content));
+  return first ? getUserTextFromContent(first.content).trim() : '';
+}
+
+function makeLocalConversationTitleFallback(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  return clean.slice(0, 40) + (clean.length > 40 ? '...' : '');
+}
+
+function hashTitlePrompt(text) {
+  let h = 0;
+  const s = String(text || '');
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return String(h);
+}
+
+function cleanGeneratedConversationTitle(raw) {
+  let title = String(raw || '')
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .replace(/^title\s*:\s*/i, '')
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  title = title.replace(/[.。！？!?,，;；:：]+$/g, '').trim();
+  if (!title) return '';
+  if (/^(new chat|untitled|conversation|chat)$/i.test(title)) return '';
+  if (title.length > 60) title = title.slice(0, 57).trim() + '...';
+  return title;
+}
+
+function buildConversationTitleRequestBody(firstQuestion) {
+  const system = 'You generate concise chat titles. Return only the title, no quotes, no punctuation-only ending, no explanation.';
+  const request = `Create a short title, 3-8 words, for this first user question:\n\n${firstQuestion}`;
+  return PROVIDER === 'anthropic_compat'
+    ? { model: API_MODEL, max_tokens: 32, system, messages: [{ role: 'user', content: request }], stream: false }
+    : { model: API_MODEL, max_tokens: 32, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: request }] };
+}
+
+function extractTitleTextFromLLMResponse(data) {
+  if (PROVIDER === 'anthropic_compat') {
+    return Array.isArray(data.content)
+      ? data.content.filter(b => b.type === 'text').map(b => b.text || '').join('\n')
+      : String(data.content || '');
+  }
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function generateConversationTitleWithAI(firstQuestion) {
+  if (!String(firstQuestion || '').trim() || !_keys?.api_key) return '';
+  try {
+    const resp = await sendLLMRequestBody(buildConversationTitleRequestBody(firstQuestion));
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    return cleanGeneratedConversationTitle(extractTitleTextFromLLMResponse(data));
+  } catch (e) {
+    console.warn('Conversation title generation failed:', e);
+    return '';
+  }
+}
+
+async function maybeGenerateConversationTitle(convId, firstQuestion) {
+  const text = String(firstQuestion || '').trim();
+  if (!convId || !text) return;
+  const promptHash = hashTitlePrompt(text);
+  const key = `${convId}:${promptHash}`;
+  if (_titleGenInFlight.has(key)) return;
+
+  const meta = convHistory.find(c => c.id === convId);
+  if (!meta) return;
+  if (!meta.titleSource) {
+    meta.titleSource = meta.title === 'New Chat' ? 'default' : 'manual';
+    meta.titleStatus = meta.title === 'New Chat' ? 'idle' : 'done';
+  }
+  if (meta.titleSource === 'manual') return;
+  if (meta.titleSource === 'ai' && meta.titlePromptHash === promptHash) return;
+  if (meta.titleStatus === 'generating' && meta.titlePromptHash === promptHash) return;
+  if (meta.titleStatus === 'failed' && meta.titlePromptHash === promptHash) return;
+
+  if (!meta.title || meta.title === 'New Chat' || meta.titleSource === 'default') {
+    meta.title = makeLocalConversationTitleFallback(text);
+    meta.titleSource = 'fallback';
+  }
+  meta.titleStatus = 'generating';
+  meta.titlePromptHash = promptHash;
+  saveConvMeta();
+  renderConvList();
+  if (!_keys?.api_key) {
+    meta.titleStatus = 'idle';
+    saveConvMeta();
+    return;
+  }
+
+  _titleGenInFlight.add(key);
+  try {
+    const aiTitle = await generateConversationTitleWithAI(text);
+    const latest = convHistory.find(c => c.id === convId);
+    if (!latest || latest.titleSource === 'manual' || latest.titlePromptHash !== promptHash) return;
+    if (aiTitle) {
+      latest.title = aiTitle;
+      latest.titleSource = 'ai';
+      latest.titleStatus = 'done';
+    } else {
+      latest.titleStatus = 'failed';
+    }
+    saveConvMeta();
+    renderConvList();
+    if (typeof schedulePush === 'function') schedulePush();
+  } finally {
+    _titleGenInFlight.delete(key);
+  }
+}
+
 async function saveCurrentConv(andRenderList) {
   if (!activeConvId) return;
   const meta = convHistory.find(c => c.id === activeConvId);
@@ -3669,10 +3784,20 @@ async function saveCurrentConv(andRenderList) {
   meta.contextTokens = contextTokens;
   meta.messageCount = conversation.filter(m => m.role === 'user').length;
   meta.updated = Date.now();
-  if (meta.title === 'New Chat' && conversation.length) {
-    const first = conversation.find(m => m.role === 'user' && getUserTextFromContent(m.content));
-    const firstText = first ? getUserTextFromContent(first.content) : '';
-    if (firstText) meta.title = firstText.slice(0, 40) + (firstText.length > 40 ? '...' : '');
+  const firstText = getFirstUserQuestionForTitle(conversation);
+  if (!meta.titleSource) {
+    meta.titleSource = meta.title === 'New Chat' ? 'default' : 'manual';
+    meta.titleStatus = meta.title === 'New Chat' ? 'idle' : 'done';
+  }
+  if (firstText && meta.titleSource !== 'manual') {
+    if (!meta.titlePromptHash) meta.titlePromptHash = hashTitlePrompt(firstText);
+    if (meta.title === 'New Chat' || meta.titleSource === 'default') {
+      meta.title = makeLocalConversationTitleFallback(firstText);
+      meta.titleSource = 'fallback';
+    }
+    if (meta.titleSource !== 'ai' && meta.titleStatus !== 'generating' && meta.titleStatus !== 'failed') {
+      maybeGenerateConversationTitle(activeConvId, firstText);
+    }
   }
   saveConvMeta();
   const html = chatEl.innerHTML;
@@ -3684,7 +3809,7 @@ async function saveCurrentConv(andRenderList) {
 function newConversation(skipSave, folderId) {
   if (!skipSave) saveCurrentConv();
   const id = genConvId();
-  const meta = { id, title: 'New Chat', created: Date.now(), updated: Date.now(), loopCount: 0, totalTokens: 0, contextTokens: 0, messageCount: 0 };
+  const meta = { id, title: 'New Chat', titleSource: 'default', titleStatus: 'idle', titlePromptHash: '', created: Date.now(), updated: Date.now(), loopCount: 0, totalTokens: 0, contextTokens: 0, messageCount: 0 };
   if (folderId && convFolders.some(f => f.id === folderId)) {
     meta.folderId = folderId;
     const f = convFolders.find(x => x.id === folderId);
@@ -3805,7 +3930,12 @@ function renameConversation(id) {
   input.select();
   function commit() {
     const val = input.value.trim();
-    if (val && val !== oldTitle) { conv.title = val; saveConvMeta(); }
+    if (val && val !== oldTitle) {
+      conv.title = val;
+      conv.titleSource = 'manual';
+      conv.titleStatus = 'done';
+      saveConvMeta();
+    }
     renderConvList();
   }
   input.addEventListener('blur', commit);
@@ -7600,9 +7730,32 @@ async function _getBlob(cfg, hash) {
 
 // ── Build local state for v2 sync ─────────────────────────────────
 // Returns { manifest, objects: Map<hash,jsonStr>, blobs: Map<hash,Uint8Array> }.
+function _syncSafeProviders() {
+  const raw = _loadProviders();
+  const out = { providers: {} };
+  const providers = raw?.providers || {};
+  for (const [id, p] of Object.entries(providers)) {
+    const { apiKey, ...safe } = p || {};
+    out.providers[id] = safe;
+  }
+  return out;
+}
+function _applySyncedProviders(incoming) {
+  if (!incoming?.providers || typeof incoming.providers !== 'object') return;
+  const local = getProvidersMap();
+  const merged = { providers: {} };
+  for (const [id, p] of Object.entries(incoming.providers)) {
+    merged.providers[id] = { ...(p || {}), apiKey: local[id]?.apiKey || '' };
+  }
+  for (const [id, p] of Object.entries(local)) {
+    if (!merged.providers[id]) merged.providers[id] = p;
+  }
+  _saveProviders(merged);
+}
 async function _buildLocalState() {
   const cfg = _loadS3Cfg() || {};
   const convMeta = (await loadConvMetaFromDB()) || [];
+  const convFolderEntries = await loadConvFoldersFromDB();
   const objects = new Map();
   const blobs = new Map();
   const _vfsHashRefs = new Set();
@@ -7656,12 +7809,22 @@ async function _buildLocalState() {
   delete baseSettings.tavily_api_key;
   const settingsObj = {
     settings: baseSettings,
+    providers: _syncSafeProviders(),
+    activeProviderId: getActiveProviderId(),
     mcpTools: Array.isArray(mcpTools) ? mcpTools.filter(t => !t.serverId) : [],
-    mcpServers: Array.isArray(mcpServers) ? mcpServers.map(s => ({ id: s.id, name: s.name, type: s.type, url: s.url, token: s.token, enabled: s.enabled !== false })) : [],
+    mcpServers: Array.isArray(mcpServers) ? mcpServers.map(s => ({ id: s.id, name: s.name, type: s.type, url: s.url, token: s.token, enabled: s.enabled !== false, corsProxy: s.corsProxy || '' })) : [],
+    mcpCorsProxy,
     disabledTools: disabledTools instanceof Set ? [...disabledTools] : [],
+    hooks: Array.isArray(hooks) ? hooks : [],
     wsConfig: { ...(wsConfig || {}) },
     theme: localStorage.getItem('ba_theme') || 'dark',
-    selectedModel: localStorage.getItem('ba_selected_model') || ''
+    language: CURRENT_LANG,
+    thinkLevel: THINK_LEVEL,
+    mediaMode: MEDIA_MODE,
+    mediaModels: { ...(MEDIA_MODELS || {}) },
+    marketplaceRegistry: localStorage.getItem('ba_mp_registry') || '',
+    selectedModel: localStorage.getItem('ba_selected_model') || '',
+    activeConvId: activeConvId || ''
   };
   const settingsJson = JSON.stringify(settingsObj);
   const settingsHash = await _hashString(settingsJson);
@@ -7684,6 +7847,7 @@ async function _buildLocalState() {
     updatedAt: Date.now(),
     encrypted: !!cfg.passphrase,
     conversations: convEntries,
+    conversationFolders: convFolderEntries,
     skills: skillEntries,
     settings: { hash: settingsHash },
     memories: memoriesEntry,
@@ -7727,10 +7891,16 @@ async function _applyRemoteState(remote, objs, blobMap) {
       if (local.api_key) merged.api_key = local.api_key;
       if (local.tavily_api_key) merged.tavily_api_key = local.tavily_api_key;
       saveSettingsToStorage(merged);
+      _applySyncedProviders(s.providers);
+      if (s.activeProviderId) setActiveProviderId(s.activeProviderId);
       if (Array.isArray(s.mcpTools)) {
         const serverSourced = mcpTools.filter(t => t.serverId);
         mcpTools = s.mcpTools.filter(t => !t.serverId).concat(serverSourced);
         try { localStorage.setItem('ba_mcp_tools', JSON.stringify(mcpTools.filter(t => !t.serverId))); } catch {}
+      }
+      if (typeof s.mcpCorsProxy === 'string') {
+        mcpCorsProxy = s.mcpCorsProxy;
+        saveMcpCorsProxy();
       }
       if (Array.isArray(s.mcpServers)) {
         // Disconnect any servers not present in the pull.
@@ -7747,12 +7917,25 @@ async function _applyRemoteState(remote, objs, blobMap) {
         disabledTools = new Set(s.disabledTools);
         try { localStorage.setItem('ba_disabled_tools', JSON.stringify([...disabledTools])); } catch {}
       }
+      if (Array.isArray(s.hooks)) {
+        hooks = s.hooks;
+        saveHooks();
+      }
       if (s.wsConfig) {
         Object.assign(wsConfig, s.wsConfig);
         try { localStorage.setItem('ba_ws_config', JSON.stringify(wsConfig)); } catch {}
       }
       if (s.theme) try { localStorage.setItem('ba_theme', s.theme); } catch {}
+      if (s.language === 'zh' || s.language === 'en') try { localStorage.setItem(I18N_KEY, s.language); CURRENT_LANG = s.language; } catch {}
+      if (THINK_LEVELS.includes(s.thinkLevel)) try { localStorage.setItem(THINK_KEY, s.thinkLevel); THINK_LEVEL = s.thinkLevel; } catch {}
+      if (MEDIA_GENERATION_MODES.has(s.mediaMode)) try { localStorage.setItem(MEDIA_MODE_KEY, s.mediaMode); MEDIA_MODE = s.mediaMode; } catch {}
+      if (s.mediaModels && typeof s.mediaModels === 'object') try { localStorage.setItem(MEDIA_MODEL_KEY, JSON.stringify(s.mediaModels)); MEDIA_MODELS = { ...s.mediaModels }; } catch {}
+      if (typeof s.marketplaceRegistry === 'string' && s.marketplaceRegistry) try { localStorage.setItem('ba_mp_registry', s.marketplaceRegistry); } catch {}
       if (s.selectedModel) try { localStorage.setItem('ba_selected_model', s.selectedModel); } catch {}
+      if (s.activeConvId) try { localStorage.setItem('ba_active_conv', s.activeConvId); } catch {}
+      ACTIVE_PROVIDER = getActiveProviderProfile();
+      PROVIDER = (ACTIVE_PROVIDER && ACTIVE_PROVIDER.type) ? ACTIVE_PROVIDER.type : PROVIDER;
+      API_MODEL = localStorage.getItem('ba_selected_model') || (ACTIVE_PROVIDER && ACTIVE_PROVIDER.defaultModel) || API_MODEL;
     }
   }
 
@@ -7762,6 +7945,10 @@ async function _applyRemoteState(remote, objs, blobMap) {
     return rest;
   });
   await saveConvMetaToDB(convMeta);
+  if (Array.isArray(remote.conversationFolders)) {
+    convFolders = remote.conversationFolders;
+    await saveConvFoldersToDB();
+  }
   for (const c of (remote.conversations || [])) {
     const obj = objs.get(c.hash);
     if (!obj) continue;
@@ -7837,6 +8024,10 @@ async function _applyV1Snapshot(snap) {
   const convMeta = snap.conversations?.meta || [];
   const convData = snap.conversations?.data || {};
   await saveConvMetaToDB(convMeta);
+  if (Array.isArray(snap.conversations?.folders)) {
+    convFolders = snap.conversations.folders;
+    await saveConvFoldersToDB();
+  }
   for (const c of convMeta) { if (convData[c.id]) await saveConvDataToDB(c.id, convData[c.id]); }
   const sMeta = snap.skills?.metadata || [];
   const sFiles = snap.skills?.files || {};
@@ -11674,6 +11865,9 @@ async function agentLoop(userContent, displayText, fileList, usedSkills, options
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
   const userText = getUserTextFromContent(userContent) || displayText || '';
   appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id);
+  if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && userText) {
+    maybeGenerateConversationTitle(activeConvId, userText);
+  }
   await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList, ralph: options.ralph });
 }
 
@@ -12979,9 +13173,14 @@ async function toolGenerateVideo(input) {
 async function mediaGenerationLoop(text, filePaths, usedSkills) {
   isGenerating = true; abortCtrl = new AbortController(); updateButtons(); setStatus('running', t('media.generating'));
   const mode = MEDIA_MODE;
-  const userEntry = appendSessionEntry('message', { role: 'user', content: getMediaPromptDisplay(mode, text), usedSkillNames: (usedSkills || []).map(sk => sk.name).filter(Boolean) });
+  const mediaDisplay = getMediaPromptDisplay(mode, text);
+  const userEntry = appendSessionEntry('message', { role: 'user', content: mediaDisplay, usedSkillNames: (usedSkills || []).map(sk => sk.name).filter(Boolean) });
   rebuildConversation();
-  appendUserBubble(getMediaPromptDisplay(mode, text), filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
+  appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
+  const titleText = getUserTextFromContent(mediaDisplay) || text;
+  if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && titleText) {
+    maybeGenerateConversationTitle(activeConvId, titleText);
+  }
   try {
     const result = await runMediaGeneration(mode, text, filePaths);
     await appendMediaGenerationBubble(result);

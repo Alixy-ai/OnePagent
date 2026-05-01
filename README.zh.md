@@ -139,7 +139,9 @@ OnePagent 是纯静态站点，任意静态主机均可运行：
 通过任意 S3 兼容桶备份和跨设备同步，配置路径是 **Settings → Cloud Sync**。
 
 - 支持 AWS S3、Cloudflare R2、Backblaze B2 和 MinIO。
-- 增量内容寻址同步，可选 AES-256-GCM 加密。
+- 必填：Endpoint、Region、Bucket、Access Key ID、Secret Access Key。
+- 可选：Prefix、AES-256-GCM 加密口令、自动推送，以及 MinIO / R2 常用的 path-style URL。
+- 先在 Settings 中 **Test connection** / **Show CORS config**，再用顶栏 **Sync → Push now / Pull now**。
 - LLM 密钥不同步，始终留在本机。
 
 ---
