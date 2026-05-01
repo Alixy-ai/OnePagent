@@ -11438,7 +11438,7 @@ function normalizeProjectedMessages(messages, provider = PROVIDER, options = {})
             const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
             blocks.push({ type: 'text', text: `[Orphan tool result omitted from structured tool history]\n${truncateMiddleText(text, 1200)}` });
           } else blocks.push(block);
-        } else if ((block.type === 'image' || block.type === 'image_url') && provider !== 'anthropic_compat' && provider !== 'openai') {
+        } else if ((block.type === 'image' || block.type === 'image_url') && provider !== 'anthropic_compat' && provider !== 'openai_compat' && provider !== 'openai') {
           blocks.push({ type: 'text', text: '[Image attachment omitted: provider may not support image input]' });
         } else blocks.push(block);
       }
@@ -13438,6 +13438,7 @@ async function buildUserMessageContent(text, filePaths, usedSkills) {
         const data = bytes ? bytesToBase64(bytes) : '';
         if (data) {
           content.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+          console.info('Attached image included in vision request:', fp, mediaType);
           fileTextParts.push(`--- ${fp} ---\n[Attached image for visual analysis]`);
           continue;
         }
