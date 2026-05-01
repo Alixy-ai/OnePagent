@@ -901,6 +901,11 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .mp-install { flex: 0 0 auto; padding: 4px 10px; font-size: 10px; border: 1px solid var(--accent-orange); background: transparent; color: var(--accent-orange); border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace; }
 .mp-install:hover { background: var(--accent-orange); color: white; }
 .mp-install:disabled { opacity: 0.5; cursor: default; }
+.install-progress { display:none; margin:8px 0 10px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg-root); color:var(--text-secondary); font-size:11px; line-height:1.4; }
+.install-progress.show { display:block; }
+.install-progress .bar { height:4px; margin-top:6px; border-radius:999px; overflow:hidden; background:var(--bg-card); }
+.install-progress .fill { height:100%; width:0%; background:linear-gradient(90deg,var(--accent-orange),var(--accent-cyan)); transition:width .2s ease; }
+.skill-install-btn:disabled,.modal-btn:disabled { opacity:.5; cursor:default; pointer-events:none; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 .modal-btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
@@ -1076,20 +1081,12 @@ function toggleTheme() {
   updateThemeLabel(next);
 }
 function updateThemeLabel(theme) {
-  var label = document.getElementById('themeLabel');
-  if (!label) return;
   var isLight = theme === 'light';
-  label.setAttribute('data-i18n', isLight ? 'btn.themeLight' : 'btn.themeDark');
-  try { if (typeof t === 'function') label.textContent = t(isLight ? 'btn.themeLight' : 'btn.themeDark'); }
-  catch { label.textContent = isLight ? 'Light' : 'Dark'; }
   var btn = document.getElementById('themeToggleBtn');
-  if (btn) {
-    // Keep icon before label; icon is a leading text glyph.
-    // Ensure icon character matches theme.
-    var firstNode = btn.firstChild;
-    var iconChar = ''; // icon handled via SVG
-    if (firstNode && firstNode.nodeType === 3) firstNode.nodeValue = iconChar;
-  }
+  if (!btn) return;
+  btn.setAttribute('title', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+  var use = btn.querySelector('use');
+  if (use) use.setAttribute('href', isLight ? '#i-moon' : '#i-sun');
 }
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -1101,6 +1098,7 @@ document.addEventListener('DOMContentLoaded', function() {
 <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
   <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M20 17.5a4.5 4.5 0 0 0-1.5-8.76A6 6 0 0 0 6.1 10.2 3.5 3.5 0 0 0 6.5 17.5H20Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3a7 7 0 1 0 11.5 11.5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a7.8 7.8 0 0 0 .05-6l-2.1.2a6.9 6.9 0 0 0-1.1-1.1l.2-2.1a7.8 7.8 0 0 0-6-.05l-.9 1.9a6.9 6.9 0 0 0-1.6 0l-.9-1.9a7.8 7.8 0 0 0-6 .05l.2 2.1a6.9 6.9 0 0 0-1.1 1.1L2.6 9a7.8 7.8 0 0 0 .05 6l2.1-.2a6.9 6.9 0 0 0 1.1 1.1l-.2 2.1a7.8 7.8 0 0 0 6 .05l.9-1.9a6.9 6.9 0 0 0 1.6 0l.9 1.9a7.8 7.8 0 0 0 6-.05l-.2-2.1a6.9 6.9 0 0 0 1.1-1.1l2.1.2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-alert-triangle" viewBox="0 0 24 24"><path d="M10.3 3.2 1.7 19.2A2 2 0 0 0 3.4 22h17.2a2 2 0 0 0 1.7-2.8L13.7 3.2a2 2 0 0 0-3.4 0Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 9v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 17h.01" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></symbol>
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 12-14h-7l-1-6Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -1200,7 +1198,6 @@ document.addEventListener('DOMContentLoaded', function() {
       <span class="think-badge" id="thinkBadge" title="Thinking level" data-i18n-title="think.title"><select id="thinkSelect" class="think-select" onchange="setThinkingLevel(this.value)"><option value="auto" data-i18n="think.auto">Auto</option><option value="off" data-i18n="think.off">Off</option><option value="minimal" data-i18n="think.minimal">Minimal</option><option value="low" data-i18n="think.low">Low</option><option value="medium" data-i18n="think.medium">Medium</option><option value="high" data-i18n="think.high">High</option><option value="xhigh" data-i18n="think.xhigh">XHigh</option></select></span>
       <span class="loop-badge" id="loopBadge">Loop: 0</span>
       <span class="loop-badge" id="tokenBadge">Tokens: 0</span>
-      <button class="top-btn" onclick="newConversation()"><span data-i18n="btn.new">+ New</span></button>
       <button class="top-btn hide-mobile" onclick="clearConversation()" data-i18n="btn.clear">Clear</button>
       <button class="top-btn hide-mobile" onclick="runFsDiagnostics()" data-i18n="btn.diag">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()" data-i18n="btn.export">Export</button>
@@ -1216,8 +1213,8 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </span>
       <button class="top-btn" onclick="openSettingsModal()" title="LLM & Tavily settings" data-i18n-title="btn.settingsTitle"><svg class="ui-icon" aria-hidden="true"><use href="#i-settings"></use></svg> <span data-i18n="btn.settings">Settings</span></button>
-      <button class="top-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark theme" data-i18n-title="btn.themeTitle"><svg class="ui-icon" aria-hidden="true"><use href="#i-moon"></use></svg> <span id="themeLabel" data-i18n="btn.themeDark">Dark</span></button>
       <button class="top-btn top-btn-icon" id="langBtn" onclick="toggleLanguage()" title="Switch language / 切换语言" data-i18n-title="btn.langTitle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span data-role="lang-label">EN</span></button>
+      <button class="top-btn top-btn-icon" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark theme" data-i18n-title="btn.themeTitle"><svg class="ui-icon" aria-hidden="true"><use href="#i-moon"></use></svg></button>
     </div>
     </div>
     <button class="panel-toggle-btn" id="toggleRight" onclick="togglePanel('right')" title="Toggle right panel">&#x203A;</button>
@@ -1365,9 +1362,9 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="hooksArea"></div>
       </div>
     </div>
-    <!-- Memory -->
+    <!-- Context -->
     <div class="panel-section" data-section="memory" style="flex:1">
-      <div class="section-title" onclick="toggleSection(this)"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-database"></use></svg></span> <span data-i18n="section.memory">MEMORY</span><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-database"></use></svg></span> <span data-i18n="section.memory">CONTEXT</span><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
         <div class="memory-stats">
           <div class="mem-stat"><div class="val" id="memMsgCount">0</div><div class="lbl" data-i18n="mem.messages">Messages</div></div>
@@ -1375,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
         <div class="memory-bar"><div class="fill" id="memoryFill" style="width:0%"></div></div>
         <div class="memory-log" id="memoryLog"></div>
-        <button class="compact-btn" onclick="compactMemory()"><svg class="ui-icon" aria-hidden="true"><use href="#i-minimize-2"></use></svg> <span data-i18n="mem.autoCompact">Auto-Compact Memory</span></button>
+        <button class="compact-btn" onclick="compactMemory()"><svg class="ui-icon" aria-hidden="true"><use href="#i-minimize-2"></use></svg> <span data-i18n="mem.autoCompact">Compact Context</span></button>
       </div>
     </div>
   </div>
@@ -1408,6 +1405,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <button class="modal-tab" onclick="switchSkillTab('github',this)"><svg class="ui-icon" aria-hidden="true"><use href="#i-globe"></use></svg> <span data-i18n="skillModal.tab.github">GitHub</span></button>
         <button class="modal-tab" onclick="switchSkillTab('create',this)"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="skillModal.tab.create">Create</span></button>
       </div>
+      <div class="install-progress" id="skillInstallProgress"><div id="skillInstallProgressText">Installing...</div><div class="bar"><div class="fill" id="skillInstallProgressFill"></div></div></div>
 
       <!-- Marketplace Tab -->
       <div class="tab-content active" id="tab-market">
@@ -1438,7 +1436,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="text" id="skillGithubBranch" placeholder="main" value="main">
         <label data-i18n="skillModal.githubPath">Skill directory path (optional)</label>
         <input type="text" id="skillGithubPath" placeholder="e.g. .skills/calculator (auto-detects SKILL.md)">
-        <button class="modal-btn primary" onclick="importFromGithub()" style="width:100%"><svg class="ui-icon" aria-hidden="true"><use href="#i-download"></use></svg> <span data-i18n="skillModal.githubFetch">Fetch &amp; Install</span></button>
+        <button class="modal-btn primary" id="skillGithubInstallBtn" onclick="importFromGithub(this)" style="width:100%"><svg class="ui-icon" aria-hidden="true"><use href="#i-download"></use></svg> <span data-i18n="skillModal.githubFetch">Fetch &amp; Install</span></button>
       </div>
 
       <!-- Create Tab -->
@@ -1851,7 +1849,7 @@ const I18N = {
     'section.webSearch': 'WEB SEARCH',
     'section.todos': 'TODOS',
     'section.hooks': 'HOOKS',
-    'section.memory': 'MEMORY',
+    'section.memory': 'CONTEXT',
     // Common actions
     'action.newConv': '+ New',
     'action.newConvFolder': 'New folder',
@@ -1922,8 +1920,8 @@ const I18N = {
     'media.saved': 'Saved generated media:',
     // Memory panel
     'mem.messages': 'Messages',
-    'mem.tokens': 'Tokens',
-    'mem.autoCompact': 'Auto-Compact Memory',
+    'mem.tokens': 'Context',
+    'mem.autoCompact': 'Compact Context',
     'mem.disabledHint': 'Memory is disabled. Enable it in Settings.',
     // Status mini-badges
     'ws.noKey': 'no key',
@@ -2137,7 +2135,7 @@ const I18N = {
     'section.webSearch': '网页搜索',
     'section.todos': '待办',
     'section.hooks': '钩子',
-    'section.memory': '内存',
+    'section.memory': '上下文',
     // Common actions
     'action.newConv': '+ 新建',
     'action.newConvFolder': '新建文件夹',
@@ -2208,8 +2206,8 @@ const I18N = {
     'media.saved': '已保存生成媒体：',
     // Memory panel
     'mem.messages': '消息',
-    'mem.tokens': '令牌',
-    'mem.autoCompact': '自动压缩内存',
+    'mem.tokens': '上下文',
+    'mem.autoCompact': '压缩上下文',
     'mem.disabledHint': '记忆功能已关闭。请在设置中启用。',
     // Status mini-badges
     'ws.noKey': '无密钥',
@@ -2632,6 +2630,11 @@ const ANTHROPIC_MAX_TOKENS = 16000;
 const ANTHROPIC_SUMMARY_MAX_TOKENS = 2000;
 const CUSTOM_SYSTEM = CFG.system_prompt || '';
 const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
+const CONTEXT_WARNING_RATIO = 0.60;
+const CONTEXT_AUTO_COMPACT_RATIO = 0.75;
+const CONTEXT_CRITICAL_RATIO = 0.90;
+const CONTEXT_MICRO_COMPACT_MIN_TOKENS = 2400;
+const CONTEXT_RECENT_MESSAGE_PROTECT_COUNT = 6;
 const MODEL_CONTEXTS = { ...(CFG.model_contexts || {}) };
 let currentMaxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
 
@@ -3138,6 +3141,17 @@ let todos = [];
 let planMode = false;
 let totalTokens = 0;
 let contextTokens = 0;
+let lastUsageInfo = null;
+let lastInputTokens = 0;
+let lastOutputTokens = 0;
+let lastCacheReadTokens = 0;
+let lastCacheWriteTokens = 0;
+let lastRequestContextSnapshot = null;
+let lastContextBreakdown = null;
+let lastTurnTokens = 0;
+let contextBreakdownExpanded = false;
+let _contextSnapshotSeq = 0;
+let _contextUiRefreshTimer = null;
 let currentViewFile = null;
 
 function genEntryId() { return 'entry_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -3222,7 +3236,7 @@ function findConversationIndexByEntryId(entryId, headId = activeEntryId) {
 
 // Conversation history — metadata in localStorage, heavy data in IndexedDB
 // Metadata: { id, title, created, updated, loopCount, totalTokens, contextTokens }
-// Heavy (IndexedDB): { conversation, sessionEntries, activeEntryId, vfs, chatHTML, totalTokens, contextTokens, loopCount }
+// Heavy (IndexedDB): { conversation, sessionEntries, activeEntryId, vfs, chatHTML, totalTokens, contextTokens, loopCount, token usage details }
 let convHistory = [];
 let convFolders = []; // [{id, name, expanded}]
 let activeConvId = null;
@@ -3596,7 +3610,7 @@ async function saveCurrentConv(andRenderList) {
   }
   saveConvMeta();
   const html = chatEl.innerHTML;
-  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos });
+  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos, lastUsageInfo, lastInputTokens, lastOutputTokens, lastCacheReadTokens, lastCacheWriteTokens, lastTurnTokens });
   if (andRenderList) renderConvList();
   if (typeof schedulePush === 'function') schedulePush();
 }
@@ -3622,6 +3636,15 @@ function newConversation(skipSave, folderId) {
   loopCount = 0;
   totalTokens = 0;
   contextTokens = 0;
+  lastUsageInfo = null;
+  lastInputTokens = 0;
+  lastOutputTokens = 0;
+  lastCacheReadTokens = 0;
+  lastCacheWriteTokens = 0;
+  lastRequestContextSnapshot = null;
+  lastContextBreakdown = null;
+  lastTurnTokens = 0;
+  contextBreakdownExpanded = false;
   currentViewFile = null;
   todos = [];
   if (typeof renderTodos === 'function') renderTodos();
@@ -3662,6 +3685,15 @@ async function switchConversation(id, skipSave) {
   loopCount = meta.loopCount || 0;
   totalTokens = data?.totalTokens ?? meta.totalTokens ?? 0;
   contextTokens = data?.contextTokens ?? meta.contextTokens ?? 0;
+  lastUsageInfo = data?.lastUsageInfo || null;
+  lastInputTokens = data?.lastInputTokens || 0;
+  lastOutputTokens = data?.lastOutputTokens || 0;
+  lastCacheReadTokens = data?.lastCacheReadTokens || 0;
+  lastCacheWriteTokens = data?.lastCacheWriteTokens || 0;
+  lastRequestContextSnapshot = null;
+  lastContextBreakdown = null;
+  lastTurnTokens = data?.lastTurnTokens || 0;
+  contextBreakdownExpanded = false;
   currentViewFile = null;
   todos = Array.isArray(data?.todos) ? data.todos : [];
   if (typeof renderTodos === 'function') renderTodos();
@@ -3909,6 +3941,15 @@ function clearConversation() {
   loopCount = 0;
   totalTokens = 0;
   contextTokens = 0;
+  lastUsageInfo = null;
+  lastInputTokens = 0;
+  lastOutputTokens = 0;
+  lastCacheReadTokens = 0;
+  lastCacheWriteTokens = 0;
+  lastRequestContextSnapshot = null;
+  lastContextBreakdown = null;
+  lastTurnTokens = 0;
+  contextBreakdownExpanded = false;
   chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation cleared. Type a task to begin.</div></div>';
   todos = [];
   if (typeof renderTodos === 'function') renderTodos();
@@ -3936,26 +3977,46 @@ const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2, 10); // Per-tab
 // ═══════════════════════════════════════════════════════════════════
 let pyodideInstance = null;
 let pyodideLoading = false;
+let pyodideProgressEl = null;
 const PYODIDE_PRELOAD_PACKAGES = ['micropip', 'numpy', 'pandas', 'lxml'];
 const PYODIDE_MICROPIP_PRELOAD_PACKAGES = ['python-pptx'];
 
+function updatePyodideProgress(text, pct) {
+  if (!pyodideProgressEl || !pyodideProgressEl.isConnected) {
+    pyodideProgressEl = document.createElement('div');
+    pyodideProgressEl.className = 'msg msg-system';
+    pyodideProgressEl.innerHTML = '<div class="msg-body"></div>';
+    chatEl.appendChild(pyodideProgressEl);
+  }
+  const body = pyodideProgressEl.querySelector('.msg-body');
+  const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
+  body.innerHTML = `${esc(text)}<div class="install-progress show" style="margin:8px 0 0"><div class="bar"><div class="fill" style="width:${safePct}%"></div></div></div>`;
+  scrollBottom();
+}
+
 async function ensurePyodide() {
   if (pyodideInstance) return pyodideInstance;
-  if (pyodideLoading) { while (pyodideLoading) await new Promise(r => setTimeout(r, 100)); return pyodideInstance; }
+  if (pyodideLoading) { updatePyodideProgress('Python runtime is already loading...', 10); while (pyodideLoading) await new Promise(r => setTimeout(r, 100)); return pyodideInstance; }
   pyodideLoading = true;
-  appendSystemMsg('Loading Python runtime (Pyodide WASM)...');
+  updatePyodideProgress('Loading Python runtime (Pyodide WASM)...', 5);
   try {
-    pyodideInstance = await loadPyodide();
-    await pyodideInstance.loadPackage(PYODIDE_PRELOAD_PACKAGES);
-    for (const pkg of PYODIDE_MICROPIP_PRELOAD_PACKAGES) {
+    updatePyodideProgress('Downloading and initializing Pyodide...', 15);
+    pyodideInstance = await loadPyodide({ stdout: msg => console.log('[pyodide]', msg), stderr: msg => console.warn('[pyodide]', msg) });
+    updatePyodideProgress(`Loading packages: ${PYODIDE_PRELOAD_PACKAGES.join(', ')}...`, 35);
+    await pyodideInstance.loadPackage(PYODIDE_PRELOAD_PACKAGES, msg => updatePyodideProgress(String(msg || 'Loading Pyodide packages...'), 55));
+    const totalPip = PYODIDE_MICROPIP_PRELOAD_PACKAGES.length || 1;
+    for (const [idx, pkg] of PYODIDE_MICROPIP_PRELOAD_PACKAGES.entries()) {
+      const pct = 70 + Math.round((idx / totalPip) * 20);
+      updatePyodideProgress(`Installing Python package ${idx + 1}/${totalPip}: ${pkg}...`, pct);
       await pyodideInstance.runPythonAsync(`import micropip; await micropip.install("${pkg}")`);
     }
     pyodideLoading = false;
-    appendSystemMsg('Python runtime ready (Pyodide).');
+    updatePyodideProgress('Python runtime ready (Pyodide).', 100);
     if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
     return pyodideInstance;
   } catch (e) {
     pyodideLoading = false;
+    updatePyodideProgress('Failed to load Pyodide: ' + e.message, 100);
     throw new Error('Failed to load Pyodide: ' + e.message);
   }
 }
@@ -5496,6 +5557,56 @@ function parseSkillMd(text) {
   return { meta, body };
 }
 
+let skillInstallInProgress = false;
+
+function setSkillInstallProgress(text, pct = 0, show = true) {
+  const box = document.getElementById('skillInstallProgress');
+  const label = document.getElementById('skillInstallProgressText');
+  const fill = document.getElementById('skillInstallProgressFill');
+  if (box) box.classList.toggle('show', !!show);
+  if (label) label.textContent = text || '';
+  if (fill) fill.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + '%';
+  const disabled = !!show && skillInstallInProgress;
+  document.querySelectorAll('#skillModal button, #skillModal input, #skillModal textarea').forEach(el => {
+    if (el.classList.contains('modal-close')) return;
+    if (disabled) {
+      if (el.dataset.installDisabled !== '1') el.dataset.installWasDisabled = el.disabled ? '1' : '0';
+      el.dataset.installDisabled = '1';
+      el.disabled = true;
+    } else if (el.dataset.installDisabled === '1') {
+      const wasDisabled = el.dataset.installWasDisabled === '1';
+      delete el.dataset.installDisabled;
+      delete el.dataset.installWasDisabled;
+      el.disabled = wasDisabled;
+    }
+  });
+}
+
+async function runSkillInstallTask(label, task, options = {}) {
+  if (skillInstallInProgress) return null;
+  skillInstallInProgress = true;
+  const button = options.button || null;
+  const oldText = button ? button.innerHTML : '';
+  let success = false;
+  try {
+    setSkillInstallProgress(label || 'Installing skill...', 8, true);
+    const result = await task((text, pct) => setSkillInstallProgress(text, pct, true));
+    success = true;
+    setSkillInstallProgress('Skill installed.', 100, true);
+    return result;
+  } catch (e) {
+    const message = e?.message || String(e);
+    setSkillInstallProgress('Skill install failed: ' + message, 100, true);
+    if (!options.silentError) alert('Skill install failed: ' + message);
+    if (options.rethrow) throw e;
+    return null;
+  } finally {
+    skillInstallInProgress = false;
+    setTimeout(() => setSkillInstallProgress('', 0, false), success ? 700 : 1800);
+    if (button) { button.disabled = false; button.innerHTML = oldText; }
+  }
+}
+
 function installSkill(skill) {
   if (!skill.id) skill.id = 'skill_' + Date.now();
   if (!skill.icon) skill.icon = 'i:bolt';
@@ -5682,20 +5793,27 @@ function resolveSkillScript(path) {
 // ── Skill Import: File (.skill / .zip / .json / SKILL.md) ──
 async function handleSkillFile(event) {
   const file = event.target.files[0];
-  if (!file) return;
-  const name = file.name.toLowerCase();
-  if (name.endsWith('.zip') || name.endsWith('.skill')) {
-    await importSkillZip(file);
-  } else if (name === 'skill.md' || name.endsWith('.md')) {
-    const text = await file.text();
-    const skill = skillFromMd(text, 'file:' + file.name);
-    installSkill(skill); closeSkillModal();
-  } else {
-    // Legacy JSON format
-    const text = await file.text();
-    try { const skill = JSON.parse(text); skill.source = 'file:' + file.name; installSkill(skill); closeSkillModal(); }
-    catch (e) { alert('Invalid file: ' + e.message); }
-  }
+  if (!file || skillInstallInProgress) return;
+  await runSkillInstallTask('Reading skill file...', async progress => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.zip') || name.endsWith('.skill')) {
+      await importSkillZip(file, progress);
+    } else if (name === 'skill.md' || name.endsWith('.md')) {
+      progress('Parsing SKILL.md...', 35);
+      const text = await file.text();
+      const skill = skillFromMd(text, 'file:' + file.name);
+      progress('Installing skill...', 75);
+      installSkill(skill); closeSkillModal();
+    } else {
+      progress('Parsing skill JSON...', 35);
+      const text = await file.text();
+      const skill = JSON.parse(text);
+      skill.source = 'file:' + file.name;
+      progress('Installing skill...', 75);
+      installSkill(skill); closeSkillModal();
+    }
+  });
+  event.target.value = '';
 }
 
 function skillFromMd(text, source) {
@@ -5719,9 +5837,11 @@ function skillFromMd(text, source) {
   };
 }
 
-async function importSkillZip(file) {
+async function importSkillZip(file, progress = () => {}) {
   try {
+    progress('Reading archive...', 20);
     const { entries } = await readZipFile(file);
+    progress(`Archive read: ${entries.length} files`, 35);
     // SkillLite format: find SKILL.md (may be in a subdirectory)
     let skillMdEntry = entries.find(e => e.name === 'SKILL.md') || entries.find(e => e.name.endsWith('/SKILL.md'));
     // Legacy format: skill.json
@@ -5735,7 +5855,11 @@ async function importSkillZip(file) {
       skill = skillFromMd(skillMdEntry.content, 'zip:' + file.name);
       if (!skill.binaryFiles) skill.binaryFiles = {};
       // Load ALL files from the archive
+      const totalEntries = Math.max(1, entries.length);
+      let processedEntries = 0;
       for (const entry of entries) {
+        processedEntries++;
+        progress(`Importing archive files ${processedEntries}/${totalEntries}...`, 35 + Math.round((processedEntries / totalEntries) * 35));
         if (entry.name === skillMdEntry.name) continue;
         const rel = basePath ? entry.name.slice(basePath.length) : entry.name;
         if (!rel) continue;
@@ -5754,7 +5878,11 @@ async function importSkillZip(file) {
       skill.source = 'zip:' + file.name;
       if (!skill.files) skill.files = {};
       if (!skill.binaryFiles) skill.binaryFiles = {};
+      const totalEntries = Math.max(1, entries.length);
+      let processedEntries = 0;
       for (const entry of entries) {
+        processedEntries++;
+        progress(`Importing archive files ${processedEntries}/${totalEntries}...`, 35 + Math.round((processedEntries / totalEntries) * 35));
         if (entry.name === skillJsonEntry.name) continue;
         const rel = entry.name.split('/').slice(1).join('/') || entry.name;
         if (entry.bytes) {
@@ -5769,10 +5897,11 @@ async function importSkillZip(file) {
         }
       }
     } else {
-      alert('No SKILL.md or skill.json found in archive'); return;
+      throw new Error('No SKILL.md or skill.json found in archive');
     }
+    progress('Installing skill...', 85);
     installSkill(skill); closeSkillModal();
-  } catch (e) { alert('Error reading archive: ' + e.message); }
+  } catch (e) { throw new Error('Error reading archive: ' + e.message); }
 }
 
 // ZIP reader: parse Central Directory for reliable sizes, supports Deflate
@@ -5844,7 +5973,14 @@ async function readZipFile(file) {
 }
 
 // ── Skill Import: GitHub (SkillLite-compatible directory) ──
-async function importFromGithub() {
+async function importFromGithub(button, externalProgress) {
+  if (skillInstallInProgress && !externalProgress) return;
+  const runner = async progress => importFromGithubImpl(progress);
+  if (externalProgress) return runner(externalProgress);
+  return runSkillInstallTask('Fetching skill from GitHub...', runner, { button });
+}
+
+async function importFromGithubImpl(progress = () => {}) {
   let url = document.getElementById('skillGithubUrl').value.trim();
   const branch = document.getElementById('skillGithubBranch').value.trim() || 'main';
   const skillPath = document.getElementById('skillGithubPath').value.trim() || '';
@@ -5905,85 +6041,93 @@ async function importFromGithub() {
     return _base64ToBytes(blob.content);
   }
 
-  try {
-    const treeUrl = `https://api.github.com/repos/${repo}/git/trees/${_githubApiRef(branch)}?recursive=1`;
-    const treeData = await fetchJson(treeUrl);
-    const blobs = (treeData.tree || []).filter(e => e.type === 'blob' && e.path);
-    if (!blobs.length) throw new Error('Repository tree is empty or unavailable');
+  progress('Fetching repository tree...', 15);
+  const treeUrl = `https://api.github.com/repos/${repo}/git/trees/${_githubApiRef(branch)}?recursive=1`;
+  const treeData = await fetchJson(treeUrl);
+  const blobs = (treeData.tree || []).filter(e => e.type === 'blob' && e.path);
+  if (!blobs.length) throw new Error('Repository tree is empty or unavailable');
 
-    let skillRoot = requestedPath;
-    let skillMdEntry = null;
-    let skillJsonEntry = null;
-    if (skillRoot) {
-      skillMdEntry = blobs.find(e => e.path === `${skillRoot}/SKILL.md`);
-      skillJsonEntry = !skillMdEntry && blobs.find(e => e.path === `${skillRoot}/skill.json`);
-      if (!skillMdEntry && !skillJsonEntry) throw new Error(`No SKILL.md or skill.json found under ${skillRoot}`);
-    } else {
-      const skillMdCandidates = blobs
-        .filter(e => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))
-        .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path));
-      skillMdEntry = skillMdCandidates[0] || null;
-      const skillJsonCandidates = !skillMdEntry ? blobs
-        .filter(e => e.path === 'skill.json' || e.path.endsWith('/skill.json'))
-        .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path)) : [];
-      skillJsonEntry = skillJsonCandidates[0] || null;
-      if (!skillMdEntry && !skillJsonEntry) throw new Error('No SKILL.md or skill.json found in repository');
-      skillRoot = _dirname((skillMdEntry || skillJsonEntry).path);
+  let skillRoot = requestedPath;
+  let skillMdEntry = null;
+  let skillJsonEntry = null;
+  if (skillRoot) {
+    skillMdEntry = blobs.find(e => e.path === `${skillRoot}/SKILL.md`);
+    skillJsonEntry = !skillMdEntry && blobs.find(e => e.path === `${skillRoot}/skill.json`);
+    if (!skillMdEntry && !skillJsonEntry) throw new Error(`No SKILL.md or skill.json found under ${skillRoot}`);
+  } else {
+    const skillMdCandidates = blobs
+      .filter(e => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))
+      .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path));
+    skillMdEntry = skillMdCandidates[0] || null;
+    const skillJsonCandidates = !skillMdEntry ? blobs
+      .filter(e => e.path === 'skill.json' || e.path.endsWith('/skill.json'))
+      .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path)) : [];
+    skillJsonEntry = skillJsonCandidates[0] || null;
+    if (!skillMdEntry && !skillJsonEntry) throw new Error('No SKILL.md or skill.json found in repository');
+    skillRoot = _dirname((skillMdEntry || skillJsonEntry).path);
+  }
+
+  let skill;
+  if (skillMdEntry) {
+    progress('Fetching SKILL.md...', 30);
+    const md = new TextDecoder().decode(await fetchBlobBytes(skillMdEntry.url, skillMdEntry.path));
+    skill = skillFromMd(md, `github:${repo}@${branch}`);
+    skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
+  } else {
+    progress('Fetching skill.json...', 30);
+    const json = new TextDecoder().decode(await fetchBlobBytes(skillJsonEntry.url, skillJsonEntry.path));
+    skill = JSON.parse(json);
+    skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
+  }
+  if (!skill.references) skill.references = {};
+  if (!skill.scripts) skill.scripts = {};
+  if (!skill.files) skill.files = {};
+  if (!skill.binaryFiles) skill.binaryFiles = {};
+
+  const rootFiles = blobs
+    .filter(e => _pathWithin(e.path, skillRoot))
+    .filter(e => e.path !== skillMdEntry?.path && e.path !== skillJsonEntry?.path)
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const totalFiles = Math.max(1, rootFiles.length);
+  for (const [idx, entry] of rootFiles.entries()) {
+    const rel = _relPath(entry.path, skillRoot);
+    try {
+      progress(`Fetching skill files ${idx + 1}/${totalFiles}: ${rel}`, 35 + Math.round(((idx + 1) / totalFiles) * 45));
+      const bytes = await fetchBlobBytes(entry.url, entry.path);
+      _putSkillAsset(skill, rel, bytes, _isBinaryGithubPath(rel));
+    } catch (e) {
+      console.warn('Failed to fetch skill asset from GitHub:', entry.path, e);
     }
+  }
 
-    let skill;
-    if (skillMdEntry) {
-      const md = new TextDecoder().decode(await fetchBlobBytes(skillMdEntry.url, skillMdEntry.path));
-      skill = skillFromMd(md, `github:${repo}@${branch}`);
-      skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
-    } else {
-      const json = new TextDecoder().decode(await fetchBlobBytes(skillJsonEntry.url, skillJsonEntry.path));
-      skill = JSON.parse(json);
-      skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
-    }
-    if (!skill.references) skill.references = {};
-    if (!skill.scripts) skill.scripts = {};
-    if (!skill.files) skill.files = {};
-    if (!skill.binaryFiles) skill.binaryFiles = {};
-
-    const rootFiles = blobs
-      .filter(e => _pathWithin(e.path, skillRoot))
-      .filter(e => e.path !== skillMdEntry?.path && e.path !== skillJsonEntry?.path)
-      .sort((a, b) => a.path.localeCompare(b.path));
-    for (const entry of rootFiles) {
-      const rel = _relPath(entry.path, skillRoot);
-      try {
-        const bytes = await fetchBlobBytes(entry.url, entry.path);
-        _putSkillAsset(skill, rel, bytes, _isBinaryGithubPath(rel));
-      } catch (e) {
-        console.warn('Failed to fetch skill asset from GitHub:', entry.path, e);
-      }
-    }
-
-    installSkill(skill); closeSkillModal();
-  } catch (e) { alert('Failed to fetch skill: ' + e.message); }
+  progress('Installing skill...', 90);
+  installSkill(skill); closeSkillModal();
 }
 
 // ── Skill Create (generates SKILL.md format) ──
 function createSkill() {
+  if (skillInstallInProgress) return;
   const name = document.getElementById('skillCreateName').value.trim();
   if (!name) { alert('Skill name is required'); return; }
   let tools = [];
   const toolsJson = document.getElementById('skillCreateTool').value.trim();
   if (toolsJson) { try { tools = JSON.parse(toolsJson); if (!Array.isArray(tools)) tools = [tools]; } catch (e) { alert('Invalid tool JSON: ' + e.message); return; } }
-  installSkill({
-    name,
-    icon: document.getElementById('skillCreateIcon').value.trim() || 'i:bolt',
-    description: document.getElementById('skillCreateDesc').value.trim(),
-    trigger: document.getElementById('skillCreateTrigger').value.trim(),
-    body: document.getElementById('skillCreatePrompt').value.trim(),
-    tools,
-    references: {},
-    scripts: {},
-    active: true,
-    source: 'manual',
+  runSkillInstallTask('Creating skill...', async progress => {
+    progress('Installing skill...', 70);
+    installSkill({
+      name,
+      icon: document.getElementById('skillCreateIcon').value.trim() || 'i:bolt',
+      description: document.getElementById('skillCreateDesc').value.trim(),
+      trigger: document.getElementById('skillCreateTrigger').value.trim(),
+      body: document.getElementById('skillCreatePrompt').value.trim(),
+      tools,
+      references: {},
+      scripts: {},
+      active: true,
+      source: 'manual',
+    });
+    closeSkillModal();
   });
-  closeSkillModal();
 }
 
 // Modal
@@ -6066,38 +6210,46 @@ function renderMarketplaceList() {
 }
 async function installFromMarketplace(index, btn) {
   const entry = _mpEntries[index];
-  if (!entry) return;
+  if (!entry || skillInstallInProgress) return;
   const status = document.getElementById('mpStatus');
-  if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+  const oldText = btn ? btn.textContent : '';
   try {
-    if (entry.source === 'inline' && entry.skill) {
-      // Self-contained skill object in the registry
-      installSkill(Object.assign({ active: true, source: 'marketplace:' + (entry.name || 'inline') }, entry.skill));
-    } else if (entry.repo) {
-      // Delegate to existing GitHub importer by filling the fields
-      document.getElementById('skillGithubUrl').value = /^https?:\/\//.test(entry.repo) ? entry.repo : ('https://github.com/' + entry.repo);
-      document.getElementById('skillGithubBranch').value = entry.branch || 'main';
-      document.getElementById('skillGithubPath').value = entry.path || '';
-      await importFromGithub();
-    } else if (entry.url) {
-      // Direct SKILL.md or skill JSON URL
-      const resp = await fetch(entry.url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const txt = await resp.text();
-      let skill;
-      try { skill = JSON.parse(txt); }
-      catch { skill = { name: entry.name, description: entry.description, icon: entry.icon || 'i:bolt', body: txt, references: {}, scripts: {}, active: true }; }
-      skill.source = 'marketplace:' + entry.name;
-      installSkill(skill);
-    } else {
-      throw new Error('Entry has no repo/url/inline skill');
-    }
+    await runSkillInstallTask(`Installing "${entry.name}"...`, async progress => {
+      if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+      if (entry.source === 'inline' && entry.skill) {
+        progress('Installing inline skill...', 70);
+        installSkill(Object.assign({ active: true, source: 'marketplace:' + (entry.name || 'inline') }, entry.skill));
+      } else if (entry.repo) {
+        progress('Preparing GitHub import...', 10);
+        document.getElementById('skillGithubUrl').value = /^https?:\/\//.test(entry.repo) ? entry.repo : ('https://github.com/' + entry.repo);
+        document.getElementById('skillGithubBranch').value = entry.branch || 'main';
+        document.getElementById('skillGithubPath').value = entry.path || '';
+        await importFromGithub(null, progress);
+      } else if (entry.url) {
+        progress('Fetching skill file...', 25);
+        const resp = await fetch(entry.url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        progress('Parsing skill file...', 55);
+        const txt = await resp.text();
+        let skill;
+        try { skill = JSON.parse(txt); }
+        catch {
+          if (entry.url.toLowerCase().endsWith('.md')) skill = skillFromMd(txt, 'marketplace:' + entry.name);
+          else skill = { name: entry.name, description: entry.description, icon: entry.icon || 'i:bolt', body: txt, references: {}, scripts: {}, active: true };
+        }
+        skill.source = 'marketplace:' + entry.name;
+        progress('Installing skill...', 85);
+        installSkill(skill);
+      } else {
+        throw new Error('Entry has no repo/url/inline skill');
+      }
+    }, { button: btn, rethrow: true, silentError: true });
     status.textContent = `Installed "${entry.name}"`;
     if (btn) { btn.textContent = 'Installed'; btn.disabled = true; }
     renderMarketplaceList();
   } catch (e) {
     status.textContent = 'Install failed: ' + e.message;
-    if (btn) { btn.disabled = false; btn.textContent = 'Install'; }
+    if (btn) { btn.disabled = false; btn.textContent = oldText || 'Install'; }
   }
 }
 
@@ -8324,7 +8476,7 @@ function memRank(records, queryText, { limit = 8, now = Date.now() } = {}) {
   return scored.slice(0, limit);
 }
 
-async function memRecallForPrompt(messages) {
+async function memRecallForPrompt(messages, options = {}) {
   try {
     const cfg = memGetSettings();
     if (!cfg.enabled) return '';
@@ -8346,11 +8498,12 @@ async function memRecallForPrompt(messages) {
       const header = '[' + _memDateLabel(rec.createdAt) + ', ' + _memRelativeLabel(rec.createdAt, now) + (tagStr ? ', ' + tagStr : '') + (rec.pinned ? ', pinned' : '') + ']';
       return '- ' + header + ' ' + rec.content;
     });
-    // Bump recallCount / lastRecalledAt (best-effort, fire-and-forget).
-    for (const { rec } of picked) {
-      rec.lastRecalledAt = now;
-      rec.recallCount = (rec.recallCount || 0) + 1;
-      memPutRaw(rec).catch(() => {});
+    if (!options.readOnly) {
+      for (const { rec } of picked) {
+        rec.lastRecalledAt = now;
+        rec.recallCount = (rec.recallCount || 0) + 1;
+        memPutRaw(rec).catch(() => {});
+      }
     }
     return '\n\n## Recalled Memories (from prior conversations)\nMemory = Information + Time Label + Relationships. Use these facts if relevant to the current request; ignore if stale or unrelated.\n' + lines.join('\n');
   } catch (e) { console.warn('memRecallForPrompt failed', e); return ''; }
@@ -8948,7 +9101,7 @@ function toggleToolEnabled(name) {
 function getEnabledToolsAnthropic() { return allToolsAnthropic.filter(t => !disabledTools.has(t.name)); }
 function getEnabledToolsOpenAI() { return allToolsOpenAI.filter(t => !disabledTools.has(t.function.name)); }
 
-function rebuildToolDefs(headId = activeEntryId) {
+function rebuildToolDefs(headId = activeEntryId, options = {}) {
   allToolsAnthropic = BASE_TOOLS_ANTHROPIC.filter(t => {
     // TodoWrite and ExitPlanMode are plan-mode-only tools
     if (t.name === 'TodoWrite' || t.name === 'ExitPlanMode') return planMode;
@@ -8978,7 +9131,7 @@ function rebuildToolDefs(headId = activeEntryId) {
     );
   }
   allToolsOpenAI = allToolsAnthropic.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
-  renderToolsGrid();
+  if (!options.skipRender) renderToolsGrid();
 }
 
 function renderToolsGrid() {
@@ -10261,16 +10414,312 @@ function estimateOpenAIRequestTokens(body) {
   if (Array.isArray(body.tools)) total += estimateTokenCountFromText(JSON.stringify(body.tools));
   return total;
 }
-function updateMemoryUI() {
-  const mc = conversation.length;
-  const currentContext = Math.max(0, Number(contextTokens) || 0);
+function estimateAnyTokenCount(value) {
+  if (value == null) return 0;
+  if (typeof value === 'string') return estimateTokenCountFromText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return estimateTokenCountFromText(String(value));
+  try { return estimateTokenCountFromText(JSON.stringify(value)); } catch { return 0; }
+}
+function estimateContentTokens(content) {
+  if (typeof content === 'string') return estimateTokenCountFromText(content);
+  if (!Array.isArray(content)) return estimateAnyTokenCount(content);
+  let total = 0;
+  for (const block of content) {
+    if (!block || typeof block !== 'object') total += estimateAnyTokenCount(block);
+    else if (block.type === 'text') total += estimateTokenCountFromText(block.text || '');
+    else if (block.type === 'tool_result') total += estimateTokenCountFromText(typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '')) + 24;
+    else if (block.type === 'tool_use') total += estimateAnyTokenCount(block.input) + estimateTokenCountFromText(block.name || '') + 24;
+    else if (block.type === 'image' || block.type === 'image_url') total += 255;
+    else if (block.type === 'reasoning') total += estimateTokenCountFromText(block.reasoning_content || block.text || '');
+    else total += estimateAnyTokenCount(block);
+  }
+  return total;
+}
+function estimateMessageTokens(message) {
+  if (!message) return 0;
+  let total = 4 + estimateTokenCountFromText(message.role || '');
+  total += estimateContentTokens(message.content);
+  if (message.reasoning_content) total += estimateTokenCountFromText(message.reasoning_content);
+  if (Array.isArray(message.tool_calls)) total += estimateAnyTokenCount(message.tool_calls);
+  return total;
+}
+function estimateSessionEntryTokens(entry) {
+  if (!entry) return 0;
+  if (entry.type === 'tool_result') return estimateContentTokens(entry.content) + 8;
+  return estimateMessageTokens(projectEntryToMessage(entry));
+}
+function estimateRequestBodyTokens(body) {
+  if (!body || typeof body !== 'object') return 0;
+  if (PROVIDER === 'anthropic_compat') {
+    let total = estimateTokenCountFromText(body.system || '');
+    if (Array.isArray(body.messages)) total += body.messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+    if (Array.isArray(body.tools)) total += estimateAnyTokenCount(body.tools);
+    if (body.thinking) total += estimateAnyTokenCount(body.thinking);
+    return total;
+  }
+  let total = estimateOpenAIRequestTokens(body);
+  if (body.reasoning || body.reasoning_effort) total += estimateAnyTokenCount({ reasoning: body.reasoning, reasoning_effort: body.reasoning_effort });
+  return total;
+}
+function extractUsageDetails(usage, options = {}) {
+  if (!usage || typeof usage !== 'object') return null;
+  const cacheRead = Math.max(Number(usage.cache_read_input_tokens) || 0, Number(usage.prompt_cache_hit_tokens) || 0);
+  const cacheWrite = Math.max(Number(usage.cache_creation_input_tokens) || 0, Number(usage.prompt_cache_miss_tokens) || 0);
+  const basePromptTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.inputTokens ?? 0) || 0;
+  const promptTokens = Math.max(
+    basePromptTokens + cacheRead + cacheWrite,
+    extractTokenDetailCount(usage.prompt_tokens_details) + extractTokenDetailCount(usage.input_tokens_details),
+    cacheRead + cacheWrite
+  );
+  const reasoningTokens = Math.max(
+    Number(usage.reasoning_tokens) || 0,
+    Number(usage.completion_tokens_details?.reasoning_tokens) || 0,
+    Number(usage.output_tokens_details?.reasoning_tokens) || 0,
+    Number(usage.completion_tokens_details?.reasoningTokens) || 0,
+    Number(usage.output_tokens_details?.reasoningTokens) || 0
+  );
+  const outputTokens = Math.max(
+    Number(usage.completion_tokens ?? usage.output_tokens ?? usage.outputTokens ?? 0) || 0,
+    extractTokenDetailCount(usage.completion_tokens_details) + extractTokenDetailCount(usage.output_tokens_details),
+    options.includeReasoningDetails ? reasoningTokens : 0
+  );
+  const total = Math.max(Number(usage.total_tokens) || 0, Number(usage.totalTokens) || 0, Number(usage.total_token_count) || 0, Number(usage.totalTokenCount) || 0, promptTokens + outputTokens);
+  return { input: promptTokens, output: outputTokens, cacheRead, cacheWrite, reasoning: reasoningTokens, total };
+}
+function getContextOutputReserveTokens() {
+  const thinkingBudget = PROVIDER === 'anthropic_compat' && THINK_LEVEL !== 'auto' ? (ANTHROPIC_THINK_BUDGET[THINK_LEVEL] || 0) : 0;
+  const configured = PROVIDER === 'anthropic_compat' ? ANTHROPIC_MAX_TOKENS : 8192;
+  return Math.max(1024, Math.min(currentMaxContextTokens * 0.25, configured + thinkingBudget));
+}
+function getEffectiveContextWindowTokens() {
   const limit = Math.max(1, Number(currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
+  return Math.max(1, limit - getContextOutputReserveTokens());
+}
+function truncateMiddleText(text, maxChars = 1800) {
+  text = String(text || '');
+  if (text.length <= maxChars) return text;
+  const head = Math.floor(maxChars * 0.55);
+  const tail = Math.max(0, maxChars - head - 80);
+  return `${text.slice(0, head)}\n\n[... ${text.length - head - tail} chars compacted ...]\n\n${text.slice(-tail)}`;
+}
+function compactLargeToolResultContent(content, metadata = {}) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content || '');
+  const before = estimateTokenCountFromText(text);
+  const compacted = truncateMiddleText(text, metadata.maxChars || 1800);
+  return `[Tool output compacted]\nOriginal size: ~${formatTokenCount(before)} tokens\n${compacted}`;
+}
+function microCompactProjectedMessages(messages, options = {}) {
+  if (!Array.isArray(messages)) return [];
+  const protect = Number.isFinite(options.protectRecent) ? options.protectRecent : CONTEXT_RECENT_MESSAGE_PROTECT_COUNT;
+  const minTokens = Number.isFinite(options.minTokens) ? options.minTokens : CONTEXT_MICRO_COMPACT_MIN_TOKENS;
+  return messages.map((message, index) => {
+    const ageFromEnd = messages.length - index - 1;
+    if (ageFromEnd < protect || !Array.isArray(message?.content)) return message;
+    let changed = false;
+    const content = message.content.map(block => {
+      if (block?.type !== 'tool_result') return block;
+      const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
+      const tokens = estimateTokenCountFromText(text);
+      if (tokens < minTokens && !/^data:/i.test(text) && !/^[A-Za-z0-9+/=]{4000,}$/.test(text.slice(0, 5000))) return block;
+      changed = true;
+      return { ...block, content: compactLargeToolResultContent(block.content, { maxChars: options.maxChars || 1800 }) };
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+function normalizeProjectedMessages(messages, provider = PROVIDER) {
+  const normalized = [];
+  const seenToolCalls = new Set();
+  for (const original of microCompactProjectedMessages(messages || [])) {
+    if (!original || !original.role) continue;
+    const message = { ...original };
+    if (Array.isArray(message.content)) {
+      const blocks = [];
+      for (const block of message.content) {
+        if (!block) continue;
+        if (block.type === 'tool_use') {
+          if (block.id) seenToolCalls.add(block.id);
+          blocks.push(block);
+        } else if (block.type === 'tool_result') {
+          if (!block.tool_use_id || !seenToolCalls.has(block.tool_use_id)) {
+            const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
+            blocks.push({ type: 'text', text: `[Orphan tool result omitted from structured tool history]\n${truncateMiddleText(text, 1200)}` });
+          } else blocks.push(block);
+        } else if ((block.type === 'image' || block.type === 'image_url') && provider !== 'anthropic_compat' && provider !== 'openai') {
+          blocks.push({ type: 'text', text: '[Image attachment omitted: provider may not support image input]' });
+        } else blocks.push(block);
+      }
+      message.content = blocks;
+      if (!blocks.length) continue;
+    } else if (message.content == null || String(message.content).length === 0) continue;
+    normalized.push(message);
+  }
+  return normalized;
+}
+async function collectRequestContextParts(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
+  const projectedMessages = normalizeProjectedMessages(messages, PROVIDER);
+  const contextEditor = document.getElementById('contextEditor')?.value || '';
+  const activeSkillMetadata = getActiveSkillMetadataPrompts();
+  const triggeredSkillPrompts = getTriggeredSkillPrompts(headId);
+  const beijingTime = getBeijingTimeStr();
+  const mediaToolPrompt = getMediaToolPrompt();
+  const pyodideNativePrompt = getPyodideNativeToolPrompt();
+  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const memPrompt = await memRecallForPrompt(projectedMessages, { readOnly: !!options.readOnlyMemory });
+  rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
+  const anthropicTools = getEnabledToolsAnthropic();
+  const openaiTools = getEnabledToolsOpenAI();
+  const systemPrompt = contextEditor + activeSkillMetadata + triggeredSkillPrompts + beijingTime + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
+  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, mediaToolPrompt, pyodideNativePrompt, planPrompt, memPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+}
+function assembleRequestBodyFromParts(parts) {
+  if (PROVIDER === 'anthropic_compat') {
+    const body = {
+      model: API_MODEL,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
+      system: parts.systemPrompt,
+      messages: parts.projectedMessages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
+      tools: parts.anthropicTools
+    };
+    return applyThinkingToRequestBody(body, 'anthropic');
+  }
+  const oai = [{ role: 'system', content: parts.systemPrompt }];
+  const keepReasoning = isDeepSeekActiveProvider();
+  const skippedToolResultIds = new Set();
+  for (const m of parts.projectedMessages) {
+    if (m.role === 'user') {
+      if (Array.isArray(m.content)) {
+        const userContent = buildOpenAIUserContent(m.content);
+        for (const b of m.content) {
+          if (b.type === 'tool_result') {
+            if (keepReasoning && skippedToolResultIds.has(b.tool_use_id)) continue;
+            oai.push({ role: 'tool', tool_call_id: b.tool_use_id, content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content) });
+          }
+        }
+        if (userContent) oai.push({ role: 'user', content: userContent });
+      } else oai.push({ role: 'user', content: m.content });
+    } else if (m.role === 'assistant') {
+      if (Array.isArray(m.content)) {
+        let t = '', reasoning = '';
+        const tc = [];
+        for (const b of m.content) {
+          if (b.type === 'text') t += b.text;
+          else if (keepReasoning && b.type === 'reasoning') reasoning += b.reasoning_content || b.text || '';
+          else if (b.type === 'tool_use') tc.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } });
+        }
+        if (keepReasoning && !reasoning) {
+          for (const call of tc) skippedToolResultIds.add(call.id);
+          if (t.trim()) oai.push({ role: 'user', content: `[Previous assistant response]\n${t}` });
+          continue;
+        }
+        const msg = { role: 'assistant' };
+        if (t) msg.content = t;
+        if (reasoning) msg.reasoning_content = reasoning;
+        if (tc.length) msg.tool_calls = tc;
+        if (!t && !tc.length) msg.content = '';
+        oai.push(msg);
+      } else if (keepReasoning) {
+        const text = String(m.content || '').trim();
+        if (text) oai.push({ role: 'user', content: `[Previous assistant response]\n${text}` });
+      } else oai.push({ role: 'assistant', content: m.content });
+    }
+  }
+  return applyThinkingToRequestBody({ model: API_MODEL, messages: oai, tools: parts.openaiTools }, PROVIDER);
+}
+function estimateContextPartTokens(parts, body) {
+  const runtime = parts.beijingTime + parts.mediaToolPrompt + parts.pyodideNativePrompt + parts.planPrompt;
+  const breakdown = {
+    system: estimateTokenCountFromText(parts.contextEditor || ''),
+    skills: estimateTokenCountFromText((parts.activeSkillMetadata || '') + (parts.triggeredSkillPrompts || '')),
+    memory: estimateTokenCountFromText(parts.memPrompt || ''),
+    runtime: estimateTokenCountFromText(runtime || ''),
+    messages: (parts.projectedMessages || []).reduce((sum, msg) => sum + estimateMessageTokens(msg), 0),
+    tools: estimateAnyTokenCount(PROVIDER === 'anthropic_compat' ? parts.anthropicTools : parts.openaiTools)
+  };
+  const totalFromParts = Object.values(breakdown).reduce((sum, n) => sum + n, 0);
+  const totalFromBody = estimateRequestBodyTokens(body);
+  breakdown.other = Math.max(0, totalFromBody - totalFromParts);
+  return { breakdown, total: Math.max(totalFromBody, totalFromParts) };
+}
+async function buildContextSnapshot(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: true, skipToolRender: true });
+  const body = assembleRequestBodyFromParts(parts);
+  const estimated = estimateContextPartTokens(parts, body);
+  const maxContextTokens = Math.max(1, Number(currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
+  const outputReserveTokens = getContextOutputReserveTokens();
+  const effectiveContextTokens = Math.max(1, maxContextTokens - outputReserveTokens);
+  const totalEstimatedTokens = estimated.total;
+  const fillRatio = totalEstimatedTokens / effectiveContextTokens;
+  const state = fillRatio >= CONTEXT_CRITICAL_RATIO ? 'critical' : fillRatio >= CONTEXT_AUTO_COMPACT_RATIO ? 'auto' : fillRatio >= CONTEXT_WARNING_RATIO ? 'warning' : 'ok';
+  return { body, parts, breakdown: estimated.breakdown, totalEstimatedTokens, projectedMessageCount: parts.projectedMessages.length, maxContextTokens, outputReserveTokens, effectiveContextTokens, fillRatio, state, provider: PROVIDER, model: API_MODEL, lastUsageInfo, lastInputTokens, lastOutputTokens, lastCacheReadTokens, lastCacheWriteTokens, totalTokens, lastTurnTokens };
+}
+function applyContextSnapshot(snapshot) {
+  if (!snapshot) return;
+  lastRequestContextSnapshot = snapshot;
+  lastContextBreakdown = snapshot.breakdown || null;
+  contextTokens = Math.max(0, Number(snapshot.totalEstimatedTokens) || 0);
+}
+function scheduleContextSnapshotRefresh() {
+  if (_contextUiRefreshTimer) return;
+  _contextUiRefreshTimer = setTimeout(async () => {
+    _contextUiRefreshTimer = null;
+    const seq = ++_contextSnapshotSeq;
+    try {
+      const snapshot = await buildContextSnapshot();
+      if (seq === _contextSnapshotSeq) {
+        applyContextSnapshot(snapshot);
+        renderContextSnapshotUI(snapshot);
+      }
+    } catch (e) { console.warn('context snapshot failed', e); }
+  }, 120);
+}
+function renderContextSnapshotUI(snapshot = lastRequestContextSnapshot) {
+  const mc = snapshot?.projectedMessageCount ?? conversation.length;
+  const currentContext = Math.max(0, Number(snapshot?.totalEstimatedTokens ?? contextTokens) || 0);
+  const limit = Math.max(1, Number(snapshot?.effectiveContextTokens ?? currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
+  const rawLimit = Math.max(1, Number(snapshot?.maxContextTokens ?? currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
   const pct = Math.min(100, (currentContext / limit) * 100);
-  document.getElementById('memMsgCount').textContent = mc;
-  document.getElementById('memTokenCount').textContent = formatTokenCount(currentContext);
-  document.getElementById('memoryFill').style.width = pct + '%';
-  document.getElementById('loopBadge').textContent = `${t('badge.loop')}: ${loopCount}`;
-  document.getElementById('tokenBadge').textContent = `${t('badge.tokens')}: ${formatTokenCount(totalTokens)}`;
+  const msgEl = document.getElementById('memMsgCount');
+  const tokenEl = document.getElementById('memTokenCount');
+  const fillEl = document.getElementById('memoryFill');
+  if (msgEl) msgEl.textContent = mc;
+  if (tokenEl) tokenEl.textContent = `${formatTokenCount(currentContext)}/${formatTokenCount(rawLimit)}`;
+  if (fillEl) fillEl.style.width = pct + '%';
+  const loopEl = document.getElementById('loopBadge');
+  const tokenBadge = document.getElementById('tokenBadge');
+  if (loopEl) loopEl.textContent = `${t('badge.loop')}: ${loopCount}`;
+  if (tokenBadge) tokenBadge.textContent = `Context: ${pct.toFixed(0)}% · Session: ${formatTokenCount(totalTokens)}`;
+  renderContextBreakdown(snapshot);
+}
+function updateMemoryUI() {
+  renderContextSnapshotUI(lastRequestContextSnapshot);
+  scheduleContextSnapshotRefresh();
+}
+function renderContextBreakdown(snapshot = lastRequestContextSnapshot) {
+  const el = document.getElementById('memoryLog');
+  if (!el || !snapshot) return;
+  const b = snapshot.breakdown || {};
+  const pct = Math.min(999, Math.max(0, snapshot.fillRatio * 100));
+  const summary = `Context: ${pct.toFixed(0)}% · ${formatTokenCount(snapshot.totalEstimatedTokens)} / ${formatTokenCount(snapshot.maxContextTokens)}`;
+  const detailLines = [
+    `Messages: ${formatTokenCount(b.messages)} · System: ${formatTokenCount(b.system)} · Tools: ${formatTokenCount(b.tools)}`,
+    `Skills: ${formatTokenCount(b.skills)} · Memory: ${formatTokenCount(b.memory)} · Runtime: ${formatTokenCount(b.runtime)}`,
+    `Session: ${formatTokenCount(totalTokens)} · Last turn: ${formatTokenCount(lastTurnTokens)}`
+  ];
+  let box = el.querySelector('[data-context-breakdown]');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'mem-entry read';
+    box.dataset.contextBreakdown = '1';
+    box.title = 'Click to expand/collapse context details';
+    box.style.cursor = 'pointer';
+    box.onclick = () => {
+      contextBreakdownExpanded = !contextBreakdownExpanded;
+      renderContextBreakdown(lastRequestContextSnapshot);
+    };
+    el.prepend(box);
+  }
+  box.textContent = contextBreakdownExpanded ? `${summary}\n${detailLines.join('\n')}` : `${summary}  ▸`;
 }
 
 function logMemEntry(type, text) {
@@ -10280,36 +10729,71 @@ function logMemEntry(type, text) {
   d.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
   el.appendChild(d);
   el.scrollTop = el.scrollHeight;
+  renderContextBreakdown();
+}
+
+function isContextLengthError(status, text, error) {
+  const haystack = `${status || ''} ${text || ''} ${error?.message || error || ''}`.toLowerCase();
+  return /context_length|context length|prompt too long|maximum context|context window|token limit|too many tokens|max.*tokens|input.*too long/.test(haystack);
 }
 
 async function checkAndCompact() {
-  const te = Math.max(0, Number(contextTokens) || 0);
-  const limit = Math.max(1, Number(currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
-  if (te > limit * 0.75) { appendSystemMsg('Memory approaching limit. Auto-compacting...'); await compactMemory(); }
+  const snapshot = await buildContextSnapshot();
+  applyContextSnapshot(snapshot);
+  renderContextSnapshotUI(snapshot);
+  if (snapshot.fillRatio >= CONTEXT_AUTO_COMPACT_RATIO) {
+    appendSystemMsg(`Context approaching limit (${Math.round(snapshot.fillRatio * 100)}%). Auto-compacting...`);
+    await compactMemory({ trigger: 'auto', snapshot });
+  } else if (snapshot.fillRatio >= CONTEXT_WARNING_RATIO) {
+    logMemEntry(snapshot.fillRatio >= CONTEXT_CRITICAL_RATIO ? 'compact' : 'read', `Context ${Math.round(snapshot.fillRatio * 100)}% full; output reserve ${formatTokenCount(snapshot.outputReserveTokens)}`);
+  }
   updateMemoryUI();
 }
 
-async function compactMemory() {
+function selectRecentEntriesByTokenBudget(entries, budgetTokens) {
+  const selected = new Set();
+  const toolCallToEntry = new Map();
+  const toolResultToEntry = new Map();
+  for (const entry of entries) {
+    const content = entry.content;
+    const blocks = Array.isArray(content) ? content : [];
+    for (const block of blocks) {
+      if (block?.type === 'tool_use' && block.id) toolCallToEntry.set(block.id, entry);
+      if (block?.type === 'tool_result' && block.tool_use_id) toolResultToEntry.set(block.tool_use_id, entry);
+    }
+  }
+  let used = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    const cost = Math.max(1, estimateSessionEntryTokens(entry));
+    if (selected.size && used + cost > budgetTokens) break;
+    selected.add(entry);
+    used += cost;
+    const blocks = Array.isArray(entry.content) ? entry.content : [];
+    for (const block of blocks) {
+      const pair = block?.type === 'tool_result' ? toolCallToEntry.get(block.tool_use_id) : block?.type === 'tool_use' ? toolResultToEntry.get(block.id) : null;
+      if (pair && !selected.has(pair)) {
+        selected.add(pair);
+        used += Math.max(1, estimateSessionEntryTokens(pair));
+      }
+    }
+  }
+  return { keptEntries: entries.filter(entry => selected.has(entry)), usedTokens: used };
+}
+
+async function compactMemory(options = {}) {
   rebuildConversation();
   if (conversation.length <= 6 || !activeEntryId || !sessionEntries.length) return;
   logMemEntry('compact', 'Compacting via LLM...');
   appendSystemMsg('Summarizing conversation history via LLM...');
-  const keep = 4;
-  const byId = new Map(sessionEntries.map(entry => [entry.id, entry]));
-  const chain = [];
-  let cursor = activeEntryId;
-  while (cursor) {
-    const entry = byId.get(cursor);
-    if (!entry) break;
-    chain.push(entry);
-    cursor = entry.parentId || null;
-  }
-  chain.reverse();
+  const chain = getEntryChain(activeEntryId);
   const messageEntries = chain.filter(entry => entry.type === 'message' || entry.type === 'tool_result');
-  if (messageEntries.length <= keep + 1) return;
-  const keptEntries = messageEntries.slice(-keep);
+  const keepBudget = Math.max(2000, Math.min(20000, Math.floor((currentMaxContextTokens || DEFAULT_MAX_CONTEXT_TOKENS) * 0.25)));
+  const { keptEntries } = selectRecentEntriesByTokenBudget(messageEntries, keepBudget);
+  if (messageEntries.length <= keptEntries.length + 1) return;
+  const keptSet = new Set(keptEntries);
   const firstKeptEntryId = keptEntries[0]?.id;
-  const toCompactEntries = messageEntries.filter(entry => entry.id !== firstKeptEntryId && !keptEntries.includes(entry));
+  const toCompactEntries = messageEntries.filter(entry => entry.id !== firstKeptEntryId && !keptSet.has(entry));
   const toCompact = toCompactEntries.map(entry => entry.type === 'message' ? { role: entry.role, content: entry.content } : { role: 'user', content: entry.content });
   const summaryMessages = toCompact.map(m => {
     const role = m.role;
@@ -10353,10 +10837,18 @@ async function compactMemory() {
     logMemEntry('compact', 'LLM summary generated');
   }
 
-  appendSessionEntry('compaction', { summary, firstKeptEntryId, tokensBefore: totalTokens });
+  appendSessionEntry('compaction', {
+    summary,
+    firstKeptEntryId,
+    tokensBefore: options.snapshot?.totalEstimatedTokens ?? contextTokens,
+    trigger: options.trigger || 'manual',
+    retainedEntryCount: keptEntries.length,
+    compactedEntryCount: toCompact.length
+  });
   rebuildConversation();
-  contextTokens = 0;
-  logMemEntry('compact', `Compacted ${toCompact.length} messages → summary`);
+  const afterSnapshot = await buildContextSnapshot();
+  applyContextSnapshot(afterSnapshot);
+  logMemEntry('compact', `Compacted ${toCompact.length} messages → summary; kept ${keptEntries.length}`);
   appendSystemMsg(`Compacted ${toCompact.length} messages.`);
   updateMemoryUI();
 }
@@ -10519,67 +11011,8 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
   }
 }
 async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
-  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
-  const mediaToolPrompt = getMediaToolPrompt();
-  const pyodideNativePrompt = getPyodideNativeToolPrompt();
-  const memPrompt = await memRecallForPrompt(messages);
-  const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
-  rebuildToolDefs(headId);
-  if (PROVIDER === 'anthropic_compat') {
-    const body = {
-      model: API_MODEL,
-      max_tokens: ANTHROPIC_MAX_TOKENS,
-      system: systemPrompt,
-      messages: messages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
-      tools: getEnabledToolsAnthropic()
-    };
-    return applyThinkingToRequestBody(body, 'anthropic');
-  }
-  const oai = [{ role: 'system', content: systemPrompt }];
-  const keepReasoning = isDeepSeekActiveProvider();
-  const skippedToolResultIds = new Set();
-  for (const m of messages) {
-    if (m.role === 'user') {
-      if (Array.isArray(m.content)) {
-        const userContent = buildOpenAIUserContent(m.content);
-        for (const b of m.content) {
-          if (b.type === 'tool_result') {
-            if (keepReasoning && skippedToolResultIds.has(b.tool_use_id)) continue;
-            oai.push({ role: 'tool', tool_call_id: b.tool_use_id, content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content) });
-          }
-        }
-        if (userContent) oai.push({ role: 'user', content: userContent });
-      }
-      else oai.push({ role: 'user', content: m.content });
-    } else if (m.role === 'assistant') {
-      if (Array.isArray(m.content)) {
-        let t = '', reasoning = '';
-        const tc = [];
-        for (const b of m.content) {
-          if (b.type === 'text') t += b.text;
-          else if (keepReasoning && b.type === 'reasoning') reasoning += b.reasoning_content || b.text || '';
-          else if (b.type === 'tool_use') tc.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } });
-        }
-        if (keepReasoning && !reasoning) {
-          for (const call of tc) skippedToolResultIds.add(call.id);
-          if (t.trim()) oai.push({ role: 'user', content: `[Previous assistant response]\n${t}` });
-          continue;
-        }
-        const msg = { role: 'assistant' };
-        if (t) msg.content = t;
-        if (reasoning) msg.reasoning_content = reasoning;
-        if (tc.length) msg.tool_calls = tc;
-        if (!t && !tc.length) msg.content = '';
-        oai.push(msg);
-      }
-      else if (keepReasoning) {
-        const text = String(m.content || '').trim();
-        if (text) oai.push({ role: 'user', content: `[Previous assistant response]\n${text}` });
-      }
-      else oai.push({ role: 'assistant', content: m.content });
-    }
-  }
-  return applyThinkingToRequestBody({ model: API_MODEL, messages: oai, tools: getEnabledToolsOpenAI() }, PROVIDER);
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: false });
+  return assembleRequestBodyFromParts(parts);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -10629,7 +11062,7 @@ function extractTextChunkFromOpenAIDelta(dl) {
 }
 
 async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta) {
-  const dec = new TextDecoder(); let buf = ''; const blocks = []; let stop = null; const tjb = {}; let usageTotal = 0;
+  const dec = new TextDecoder(); let buf = ''; const blocks = []; let stop = null; const tjb = {}; let usageTotal = 0; let usageRaw = null;
   while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop(); let et = '';
     for (const line of lines) { if (line.startsWith('event: ')) { et = line.slice(7).trim(); } else if (line.startsWith('data: ')) { let d; try { d = JSON.parse(line.slice(6)); } catch { continue; }
       if (et === 'content_block_start') { blocks[d.index] = { ...d.content_block }; if (d.content_block.type === 'tool_use') { tjb[d.index] = ''; onToolStart({ ...d.content_block, index: d.index }); } }
@@ -10644,25 +11077,25 @@ async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, on
       else if (et === 'message_delta') {
         if (d.delta?.stop_reason) stop = d.delta.stop_reason;
         const msgUsage = extractUsageTotal(d.usage);
-        if (msgUsage) usageTotal = msgUsage;
+        if (msgUsage) { usageTotal = msgUsage; usageRaw = d.usage; }
       }
       else if (et === 'message_stop') {
         const finalUsage = d.message?.usage || d.usage;
         const msgUsage = extractUsageTotal(finalUsage);
-        if (msgUsage) usageTotal = msgUsage;
+        if (msgUsage) { usageTotal = msgUsage; usageRaw = finalUsage; }
       }
       else if (et === 'error') { throw new Error(d.error?.message || JSON.stringify(d)); }
       et = ''; } } }
-  return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal };
+  return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal, usage: usageRaw };
 }
 
 async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, options = {}) {
   const keepReasoning = !!options.keepReasoning;
   const includeReasoningUsage = !!options.includeReasoningUsage;
-  const dec = new TextDecoder(); let buf = '', txt = '', reasoning = ''; const tcs = {}; let stop = null; let usageTotal = 0; let streamError = '';
+  const dec = new TextDecoder(); let buf = '', txt = '', reasoning = ''; const tcs = {}; let stop = null; let usageTotal = 0; let usageRaw = null; let streamError = '';
   try {
     while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
-      for (const line of lines) { if (!line.startsWith('data: ')) continue; const ds = line.slice(6).trim(); if (ds === '[DONE]') { stop = stop || 'end_turn'; continue; } let d; try { d = JSON.parse(ds); } catch { continue; } const usage = extractUsageTotal(d.usage, { includeReasoningDetails: includeReasoningUsage }); if (usage) usageTotal = usage; const ch = d.choices?.[0]; if (!ch) continue;
+      for (const line of lines) { if (!line.startsWith('data: ')) continue; const ds = line.slice(6).trim(); if (ds === '[DONE]') { stop = stop || 'end_turn'; continue; } let d; try { d = JSON.parse(ds); } catch { continue; } const usage = extractUsageTotal(d.usage, { includeReasoningDetails: includeReasoningUsage }); if (usage) { usageTotal = usage; usageRaw = d.usage; } const ch = d.choices?.[0]; if (!ch) continue;
         if (ch.finish_reason) stop = ch.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
         const dl = ch.delta; if (!dl) continue;
         const reasoningChunk = extractReasoningChunkFromOpenAIDelta(dl);
@@ -10697,7 +11130,7 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
   }
   const blocks = []; if (keepReasoning && reasoning) blocks.push({ type: 'reasoning', reasoning_content: reasoning }); if (txt) blocks.push({ type: 'text', text: txt });
   for (const i of Object.keys(tcs).sort((a,b) => a-b)) { let inp = {}; try { inp = JSON.parse(tcs[i].arguments); } catch {} blocks.push({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: Number(i), input: inp }); }
-  return { content: blocks, stop_reason: streamError ? 'interrupted' : (stop || 'end_turn'), usage_total: usageTotal, stream_error: streamError };
+  return { content: blocks, stop_reason: streamError ? 'interrupted' : (stop || 'end_turn'), usage_total: usageTotal, usage: usageRaw, stream_error: streamError };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -10845,10 +11278,13 @@ async function _runAgentLoop(userText, options = {}) {
     while (true) {
       loopCount++; updateMemoryUI();
       await checkAndCompact();
-      const body = await buildRequestBody(buildConversationFromEntries());
-      const estimatedRequestTokens = PROVIDER === 'anthropic_compat' ? 0 : estimateOpenAIRequestTokens(body);
+      const requestMessages = buildConversationFromEntries();
+      const requestSnapshot = await buildContextSnapshot(requestMessages);
+      applyContextSnapshot(requestSnapshot);
+      const body = await buildRequestBody(requestMessages);
+      let estimatedRequestTokens = requestSnapshot.totalEstimatedTokens || estimateRequestBodyTokens(body);
       body.stream = true;
-      if (PROVIDER !== 'anthropic') {
+      if (PROVIDER !== 'anthropic_compat') {
         body.stream_options = { ...(body.stream_options || {}), include_usage: true };
       }
       // Show pending "thinking" bubble BEFORE fetch so users see immediate feedback.
@@ -10861,9 +11297,30 @@ async function _runAgentLoop(userText, options = {}) {
       msgEl.dataset.tokenBase = String(tokenBase);
       msgEl.dataset.loopBase = String(loopBase);
       let resp;
+      let retriedAfterContextCompact = false;
       try { resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: abortCtrl.signal }); }
       catch (e) { msgEl.remove(); throw e; }
-      if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        if (isContextLengthError(resp.status, errorText) && !retriedAfterContextCompact) {
+          appendSystemMsg('Context length exceeded. Compacting context and retrying once...');
+          await compactMemory({ trigger: 'context_error', snapshot: requestSnapshot });
+          const retryMessages = buildConversationFromEntries();
+          const retrySnapshot = await buildContextSnapshot(retryMessages);
+          applyContextSnapshot(retrySnapshot);
+          const retryBody = await buildRequestBody(retryMessages);
+          retryBody.stream = true;
+          estimatedRequestTokens = retrySnapshot.totalEstimatedTokens || estimateRequestBodyTokens(retryBody);
+          retriedAfterContextCompact = true;
+          if (PROVIDER !== 'anthropic_compat') retryBody.stream_options = { ...(retryBody.stream_options || {}), include_usage: true };
+          resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(retryBody), signal: abortCtrl.signal });
+          if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
+        } else {
+          msgEl.remove();
+          appendErrorBubble(`API Error (${resp.status}): ${errorText.slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
+          break;
+        }
+      }
       const reader = resp.body.getReader();
       // Replace thinking dots with streaming cursor now that response is flowing.
       delete textEl.dataset.pending;
@@ -10929,11 +11386,16 @@ async function _runAgentLoop(userText, options = {}) {
         result.content = safeContent;
       }
       const reportedUsage = Number(result.usage_total) || 0;
-      const turnTokens = isDeepSeekActiveProvider() ? Math.max(reportedUsage, estimatedRequestTokens + estimateTokenCountFromText(fullText)) : reportedUsage;
+      const estimatedOutputTokens = estimateTokenCountFromText(fullText);
+      const turnTokens = reportedUsage || (estimatedRequestTokens + estimatedOutputTokens);
       totalTokens += turnTokens;
-      if (Number.isFinite(turnTokens) && turnTokens > 0) {
-        contextTokens = turnTokens;
-      }
+      lastTurnTokens = turnTokens;
+      lastUsageInfo = result.usage || null;
+      const usageDetails = extractUsageDetails(result.usage, { includeReasoningDetails: isDeepSeekActiveProvider() });
+      lastInputTokens = usageDetails?.input || estimatedRequestTokens;
+      lastOutputTokens = usageDetails?.output || estimatedOutputTokens;
+      lastCacheReadTokens = usageDetails?.cacheRead || 0;
+      lastCacheWriteTokens = usageDetails?.cacheWrite || 0;
       // Flush pending tool render before finalizing tool cards
       if (_toolRenderTimer) {
         clearTimeout(_toolRenderTimer);
@@ -10967,6 +11429,7 @@ async function _runAgentLoop(userText, options = {}) {
       const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId, streamError: result.stream_error || undefined });
       rebuildConversation();
       msgEl.dataset.assistantEntryId = assistantEntry.id;
+      applyContextSnapshot(await buildContextSnapshot());
       updateMemoryUI();
       await runHooks('on_assistant_response', { content: result.content, loopCount, stopReason: result.stop_reason });
       // Fire memory extraction ONCE per user turn — on the final response,
@@ -11025,6 +11488,7 @@ async function _runAgentLoop(userText, options = {}) {
         }
         appendSessionEntry('tool_result', { content: trs, promptEntryId });
         rebuildConversation();
+        applyContextSnapshot(await buildContextSnapshot());
         setStatus('running', t('status.processing'));
         scrollBottom();
       }
@@ -11470,6 +11934,15 @@ function msgAction(btn, role) {
     if (!userText) return;
     totalTokens = Number.isFinite(tokenBase) && tokenBase >= 0 ? tokenBase : 0;
     contextTokens = 0;
+    lastUsageInfo = null;
+    lastInputTokens = 0;
+    lastOutputTokens = 0;
+    lastCacheReadTokens = 0;
+    lastCacheWriteTokens = 0;
+    lastRequestContextSnapshot = null;
+    lastContextBreakdown = null;
+    lastTurnTokens = 0;
+    contextBreakdownExpanded = false;
     loopCount = Number.isFinite(loopBase) && loopBase >= 0 ? loopBase : Math.max(0, loopCount - 1);
     let userBubble = msgEl.previousElementSibling;
     while (userBubble && !userBubble.classList.contains('msg-user')) userBubble = userBubble.previousElementSibling;
