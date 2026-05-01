@@ -3718,8 +3718,8 @@ function cleanGeneratedConversationTitle(raw) {
 }
 
 function buildConversationTitleRequestBody(firstQuestion) {
-  const system = 'You generate concise chat titles. Return only the title, no quotes, no punctuation-only ending, no explanation.';
-  const request = `Create a short title, 3-8 words, for this first user question:\n\n${firstQuestion}`;
+  const system = 'You generate concise chat titles. Use the same language as the user question. Return only the title, no quotes, no punctuation-only ending, no explanation.';
+  const request = `Create a short title for this first user question. For Chinese, use 4-12 Chinese characters; otherwise use 3-8 words.\n\n${firstQuestion}`;
   return PROVIDER === 'anthropic_compat'
     ? { model: API_MODEL, max_tokens: 32, system, messages: [{ role: 'user', content: request }], stream: false }
     : { model: API_MODEL, max_tokens: 32, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: request }] };
@@ -3735,7 +3735,7 @@ function extractTitleTextFromLLMResponse(data) {
 }
 
 async function generateConversationTitleWithAI(firstQuestion) {
-  if (!String(firstQuestion || '').trim() || !_keys?.api_key) return '';
+  if (!String(firstQuestion || '').trim()) return '';
   try {
     const resp = await sendLLMRequestBody(buildConversationTitleRequestBody(firstQuestion));
     if (!resp.ok) return '';
@@ -3756,14 +3756,18 @@ async function maybeGenerateConversationTitle(convId, firstQuestion) {
 
   const meta = convHistory.find(c => c.id === convId);
   if (!meta) return;
+  const fallbackTitle = makeLocalConversationTitleFallback(text);
+  const looksLikeAutoFallback = meta.title === fallbackTitle && (!meta.titlePromptHash || meta.titlePromptHash === promptHash);
   if (!meta.titleSource) {
-    meta.titleSource = meta.title === 'New Chat' ? 'default' : 'manual';
-    meta.titleStatus = meta.title === 'New Chat' ? 'idle' : 'done';
+    meta.titleSource = meta.title === 'New Chat' ? 'default' : (looksLikeAutoFallback ? 'fallback' : 'manual');
+    meta.titleStatus = meta.title === 'New Chat' || looksLikeAutoFallback ? 'idle' : 'done';
+  } else if (meta.titleSource === 'manual' && looksLikeAutoFallback) {
+    meta.titleSource = 'fallback';
+    meta.titleStatus = 'idle';
   }
   if (meta.titleSource === 'manual') return;
   if (meta.titleSource === 'ai' && meta.titlePromptHash === promptHash) return;
   if (meta.titleStatus === 'generating' && meta.titlePromptHash === promptHash) return;
-  if (meta.titleStatus === 'failed' && meta.titlePromptHash === promptHash) return;
 
   if (!meta.title || meta.title === 'New Chat' || meta.titleSource === 'default') {
     meta.title = makeLocalConversationTitleFallback(text);
@@ -3773,11 +3777,6 @@ async function maybeGenerateConversationTitle(convId, firstQuestion) {
   meta.titlePromptHash = promptHash;
   saveConvMeta();
   renderConvList();
-  if (!_keys?.api_key) {
-    meta.titleStatus = 'idle';
-    saveConvMeta();
-    return;
-  }
 
   _titleGenInFlight.add(key);
   try {
@@ -3789,7 +3788,7 @@ async function maybeGenerateConversationTitle(convId, firstQuestion) {
       latest.titleSource = 'ai';
       latest.titleStatus = 'done';
     } else {
-      latest.titleStatus = 'failed';
+      latest.titleStatus = 'idle';
     }
     saveConvMeta();
     renderConvList();
@@ -3810,9 +3809,15 @@ async function saveCurrentConv(andRenderList) {
   meta.messageCount = conversation.filter(m => m.role === 'user').length;
   meta.updated = Date.now();
   const firstText = getFirstUserQuestionForTitle(conversation);
+  const firstHash = firstText ? hashTitlePrompt(firstText) : '';
+  const fallbackTitle = firstText ? makeLocalConversationTitleFallback(firstText) : '';
+  const looksLikeAutoFallback = firstText && meta.title === fallbackTitle && (!meta.titlePromptHash || meta.titlePromptHash === firstHash);
   if (!meta.titleSource) {
-    meta.titleSource = meta.title === 'New Chat' ? 'default' : 'manual';
-    meta.titleStatus = meta.title === 'New Chat' ? 'idle' : 'done';
+    meta.titleSource = meta.title === 'New Chat' ? 'default' : (looksLikeAutoFallback ? 'fallback' : 'manual');
+    meta.titleStatus = meta.title === 'New Chat' || looksLikeAutoFallback ? 'idle' : 'done';
+  } else if (meta.titleSource === 'manual' && looksLikeAutoFallback) {
+    meta.titleSource = 'fallback';
+    meta.titleStatus = 'idle';
   }
   if (firstText && meta.titleSource !== 'manual') {
     if (!meta.titlePromptHash) meta.titlePromptHash = hashTitlePrompt(firstText);
@@ -3820,7 +3825,7 @@ async function saveCurrentConv(andRenderList) {
       meta.title = makeLocalConversationTitleFallback(firstText);
       meta.titleSource = 'fallback';
     }
-    if (meta.titleSource !== 'ai' && meta.titleStatus !== 'generating' && meta.titleStatus !== 'failed') {
+    if (meta.titleSource !== 'ai' && meta.titleStatus !== 'generating') {
       maybeGenerateConversationTitle(activeConvId, firstText);
     }
   }
