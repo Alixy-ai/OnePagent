@@ -10066,32 +10066,48 @@ function extractTextChunkFromOpenAIDelta(dl) {
   return _collectTypedText(dl.content, wantedTypes, []).join('');
 }
 
-async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta) {
-  const dec = new TextDecoder(); let buf = ''; const blocks = []; let stop = null; const tjb = {}; let usageTotal = 0;
-  while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop(); let et = '';
-    for (const line of lines) { if (line.startsWith('event: ')) { et = line.slice(7).trim(); } else if (line.startsWith('data: ')) { let d; try { d = JSON.parse(line.slice(6)); } catch { continue; }
-      if (et === 'content_block_start') { blocks[d.index] = { ...d.content_block }; if (d.content_block.type === 'tool_use') { tjb[d.index] = ''; onToolStart({ ...d.content_block, index: d.index }); } }
-      else if (et === 'content_block_delta') {
-        const dx = d.delta;
-        if (dx.type === 'text_delta') { if (!blocks[d.index]) blocks[d.index] = { type: 'text', text: '' }; blocks[d.index].text += dx.text; onText(dx.text); }
-        else if (dx.type === 'thinking_delta') { const chunk = dx.thinking || dx.text || ''; if (chunk) onReasoning(chunk); }
-        else if (dx.type === 'signature_delta') { /* ignore signatures */ }
-        else if (dx.type === 'input_json_delta') { tjb[d.index] = (tjb[d.index] || '') + dx.partial_json; onToolDelta(d.index, dx.partial_json); }
-      }
-      else if (et === 'content_block_stop') { if (blocks[d.index]?.type === 'tool_use' && tjb[d.index] !== undefined) { try { blocks[d.index].input = JSON.parse(tjb[d.index]); } catch { blocks[d.index].input = {}; } } }
-      else if (et === 'message_delta') {
-        if (d.delta?.stop_reason) stop = d.delta.stop_reason;
-        const msgUsage = extractUsageTotal(d.usage);
-        if (msgUsage) usageTotal = msgUsage;
-      }
-      else if (et === 'message_stop') {
-        const finalUsage = d.message?.usage || d.usage;
-        const msgUsage = extractUsageTotal(finalUsage);
-        if (msgUsage) usageTotal = msgUsage;
-      }
-      else if (et === 'error') { throw new Error(d.error?.message || JSON.stringify(d)); }
-      et = ''; } } }
-  return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal };
+async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta, options = {}) {
+  const keepReasoning = !!options.keepReasoning;
+  const dec = new TextDecoder(); let buf = ''; const blocks = []; let stop = null; const tjb = {}; let usageTotal = 0; let streamError = ''; let reasoning = '';
+  try {
+    while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop(); let et = '';
+      for (const line of lines) { if (line.startsWith('event: ')) { et = line.slice(7).trim(); } else if (line.startsWith('data: ')) { let d; try { d = JSON.parse(line.slice(6)); } catch { continue; }
+        if (et === 'content_block_start') { blocks[d.index] = { ...d.content_block }; if (d.content_block.type === 'tool_use') { tjb[d.index] = ''; onToolStart({ ...d.content_block, index: d.index }); } }
+        else if (et === 'content_block_delta') {
+          const dx = d.delta;
+          if (dx.type === 'text_delta') { if (!blocks[d.index]) blocks[d.index] = { type: 'text', text: '' }; blocks[d.index].text += dx.text; onText(dx.text); }
+          else if (dx.type === 'thinking_delta') { const chunk = dx.thinking || dx.text || ''; if (chunk) { if (keepReasoning) reasoning += chunk; onReasoning(chunk); } }
+          else if (dx.type === 'signature_delta') { /* ignore signatures */ }
+          else if (dx.type === 'input_json_delta') { tjb[d.index] = (tjb[d.index] || '') + dx.partial_json; onToolDelta(d.index, dx.partial_json); }
+        }
+        else if (et === 'content_block_stop') { if (blocks[d.index]?.type === 'tool_use' && tjb[d.index] !== undefined) { try { blocks[d.index].input = JSON.parse(tjb[d.index]); } catch { blocks[d.index].input = {}; } } }
+        else if (et === 'message_delta') {
+          if (d.delta?.stop_reason) stop = d.delta.stop_reason;
+          const msgUsage = extractUsageTotal(d.usage);
+          if (msgUsage) usageTotal = msgUsage;
+        }
+        else if (et === 'message_stop') {
+          const finalUsage = d.message?.usage || d.usage;
+          const msgUsage = extractUsageTotal(finalUsage);
+          if (msgUsage) usageTotal = msgUsage;
+        }
+        else if (et === 'error') { throw new Error(d.error?.message || JSON.stringify(d)); }
+        et = ''; } } 
+  } catch (e) {
+    if (isAbortError(e)) throw e;
+    streamError = e?.message || String(e || 'Network error');
+  }
+  // For tool_use blocks that didn't get to content_block_stop, set input to {}
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i]?.type === 'tool_use' && blocks[i].input === undefined) {
+      blocks[i].input = {};
+    }
+  }
+  // If we have reasoning content, prepend it to the blocks if keepReasoning is true
+  const finalBlocks = [];
+  if (keepReasoning && reasoning) finalBlocks.push({ type: 'reasoning', reasoning_content: reasoning });
+  for (const b of blocks) if (b) finalBlocks.push(b);
+  return { content: finalBlocks, stop_reason: streamError ? 'interrupted' : (stop || 'end_turn'), usage_total: usageTotal, stream_error: streamError };
 }
 
 async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, options = {}) {
@@ -10346,7 +10362,7 @@ async function _runAgentLoop(userText, options = {}) {
       let result;
       try {
         result = PROVIDER === 'anthropic_compat'
-          ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta)
+          ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() })
           : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
       } catch (e) {
         if (isAbortError(e)) throw e;
