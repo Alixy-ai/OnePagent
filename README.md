@@ -46,6 +46,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Plan Mode | Agent investigates with read-only tools, drafts a Markdown plan for approval, then executes |
 | Ralph Loop | Fully unattended continue-until-done mode with marker, max/unlimited iterations, Stop, and no-progress guard |
 | Sub-agents | Delegate bounded read-only research tasks and monitor runs in the side panel |
+| Agent Swarm | Opt-in parallel orchestrator-worker fanout: lead emits multiple `SwarmSpawn` calls in one turn, role-scoped workers (researcher / critic / writer / coder) run concurrently with token budgets |
 | Human-in-the-loop | Agent can ask for text, choices, or confirmations when a task needs user input |
 | TodoWrite | Agent maintains a visible task list (pending / in-progress / completed) |
 | Hooks | User-defined JS handlers on 6 agent lifecycle events |
@@ -183,6 +184,21 @@ Long-term memory stores reusable facts across conversations. Enable it in **Sett
 - **Human-in-the-loop**: `AskUser` supports text, choices, and confirmations for decisions the model should not guess.
 - **Media tools**: image/video generation is explicit through tools and configured generation models, not automatic after every turn.
 - **Diagnostics**: file-system diagnostics live in **Settings → Diagnostics**.
+
+---
+
+## Agent Swarm
+
+Opt-in parallel orchestrator-worker fanout. Enable in **Settings → Agent Swarm**.
+
+- The lead agent gets a `SwarmSpawn` tool. Issuing several `SwarmSpawn` blocks in one turn runs them in parallel (capped by *Max concurrency*, default 3).
+- Built-in roles: **researcher**, **critic**, **writer**, **coder**. Each has its own system prompt, read-only tool whitelist, step cap, and per-worker token budget.
+- Per-turn guards: max workers, total token budget, automatic abort propagation. Plan Mode and Ralph Loop are honored — Ralph + Swarm cannot run together.
+- Set *Worker model override* (e.g. a Haiku/Sonnet) to keep workers cheap while the lead runs on a frontier model.
+- Hooks: `pre_swarm_spawn` (block / modify) and `post_swarm_spawn` (audit / accounting) join the existing 6 lifecycle events.
+- **Handoff chains** (routine-style): a worker can call `SwarmHandoff(target_role, brief)` to pass control to the next role — e.g. `researcher → critic → writer`. Cycles and depth-overflow are rejected. The originating `SwarmSpawn` returns the merged chain to the lead. Default chain cap: 3.
+- **Blackboard** (per-turn shared workspace): workers and the lead can `bb_write` notes/results, `bb_read` / `bb_list` to find them, and `bb_post_task` / `bb_claim` for self-organizing pickup. Each worker's system prompt gets an auto-injected digest of the latest entries — no need to re-fetch every turn. In-memory, scoped to one user turn (cleared on next turn).
+- Best for breadth-first work (multi-source research, comparative analysis). Avoid for tightly coupled refactors.
 
 ---
 
