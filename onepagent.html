@@ -10040,7 +10040,7 @@ async function toolSkillManager(input = {}) {
   if (action === 'install_from_github') {
     const source = parseGithubSkillSource(input);
     const { skill } = await fetchSkillFromGithubOptions(source, () => {});
-    normalizeSkill(skill, { source: `github:${source.repo}@${source.branch}${source.path ? '/' + source.path : ''}` });
+    skill = normalizeSkill(skill, { source: `github:${source.repo}@${source.branch}${source.path ? '/' + source.path : ''}` });
     const oldSkill = skills.find(s => s.name === skill.name);
     const errors = validateSkillInput(skill, { operation: 'install_github' });
     if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
