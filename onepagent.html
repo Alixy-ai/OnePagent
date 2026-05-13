@@ -568,6 +568,21 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .mc-add-row > input[type=text] { flex: 1; min-width: 0; }
 .mc-add-row > input[type=number] { width: 110px; flex-shrink: 0; text-align: right; }
 
+/* Reasoning-content return list (Settings modal) */
+.rc-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; margin-bottom: 6px; padding: 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-root); }
+.rc-list:empty { display: none; }
+.rc-empty { font-size: 10px; color: var(--text-dim); padding: 10px; text-align: center; border: 1px dashed var(--border); border-radius: 5px; margin-bottom: 6px; background: var(--bg-root); }
+.rc-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; background: var(--bg-panel); border: 1px solid var(--border); transition: border-color 0.15s; }
+.rc-row:hover { border-color: var(--border-active); }
+.rc-row .rc-model { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-row .rc-mode { width: 92px; flex-shrink: 0; padding: 4px 6px !important; margin: 0 !important; font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); }
+.rc-row .rc-effective { width: 78px; flex-shrink: 0; font-size: 10px; color: var(--text-dim); text-align: right; }
+.rc-remove { padding: 0 6px; font-size: 14px; line-height: 1; background: transparent; color: var(--text-dim); border: none; cursor: pointer; border-radius: 3px; flex-shrink: 0; }
+.rc-remove:hover { color: var(--accent-red); background: rgba(255,68,102,0.1); }
+.rc-add-row { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+.rc-add-row > input { margin: 0 !important; padding: 6px 8px !important; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+.rc-add-row > input[type=text] { flex: 1; min-width: 0; }
+
 /* File explorer */
 .fe-tree { font-size: 12px; overflow-y: auto; min-height: 140px; max-height: none; flex: 1 1 auto; padding-bottom: 8px; }
 .fe-item { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: pointer; transition: background 0.1s; white-space: nowrap; overflow: hidden; position: relative; }
@@ -1636,6 +1651,23 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="number" id="setMcNewValue" placeholder="200000" min="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addModelContextFromInputs();}">
         <button type="button" class="modal-btn secondary" onclick="addModelContextFromInputs()" style="padding:4px 10px;font-size:10px"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="settings.addModel">Add</span></button>
       </div>
+      <div style="border-top:1px solid var(--border);margin:12px 0 10px"></div>
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        <span><span data-i18n="settings.reasoningContent">Reasoning Content Return</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.reasoningContentHint">(OpenAI-compatible reasoning_content)</span></span>
+        <button type="button" class="modal-btn secondary" onclick="syncReasoningContentFromSelected()" style="padding:2px 10px;font-size:10px">&#x21A1; <span data-i18n="settings.rcImport">Import Selected</span></button>
+      </label>
+      <div id="setReasoningContentList" class="rc-list"></div>
+      <div id="setReasoningContentEmpty" class="rc-empty" data-i18n="settings.rcEmpty">No per-model reasoning settings. Auto keeps DeepSeek and MiMo on, others off.</div>
+      <div class="rc-add-row">
+        <input type="text" id="setRcNewModel" placeholder="model id" data-i18n-placeholder="settings.mcModelPh" list="setRcModelList" onkeydown="if(event.key==='Enter'){event.preventDefault();addReasoningContentModelFromInputs();}">
+        <datalist id="setRcModelList"></datalist>
+        <select id="setRcNewMode" style="width:92px;padding:6px 8px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:0">
+          <option value="auto">Auto</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+        <button type="button" class="modal-btn secondary" onclick="addReasoningContentModelFromInputs()" style="padding:4px 10px;font-size:10px"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="settings.addModel">Add</span></button>
+      </div>
       <label><span data-i18n="settings.tavilyKey">Tavily API Key</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.tavilyKeyHint">(for Web Search)</span></label>
       <input type="password" id="setTavilyKey" placeholder="tvly-...">
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
@@ -2198,6 +2230,10 @@ const I18N = {
     'settings.mcImport': 'Import Selected',
     'settings.mcEmpty': 'No per-model limits set. Click "Import Selected" or add a row below.',
     'settings.mcModelPh': 'model id',
+    'settings.reasoningContent': 'Reasoning Content Return',
+    'settings.reasoningContentHint': '(OpenAI-compatible reasoning_content)',
+    'settings.rcImport': 'Import Selected',
+    'settings.rcEmpty': 'No per-model reasoning settings. Auto keeps DeepSeek and MiMo on, others off.',
     'settings.tavilyKey': 'Tavily API Key',
     'settings.tavilyKeyHint': '(for Web Search)',
     'settings.memHeader': 'Memory',
@@ -2604,6 +2640,10 @@ const I18N = {
     'settings.mcImport': '导入已选模型',
     'settings.mcEmpty': '尚未设置模型上下文长度。点击"导入已选模型"或在下方添加一行。',
     'settings.mcModelPh': '模型 ID',
+    'settings.reasoningContent': '思考内容回传',
+    'settings.reasoningContentHint': '（OpenAI-compatible reasoning_content）',
+    'settings.rcImport': '导入已选模型',
+    'settings.rcEmpty': '尚未设置模型思考内容回传。Auto 默认 DeepSeek 和 MiMo 开启，其他关闭。',
     'settings.tavilyKey': 'Tavily API Key',
     'settings.tavilyKeyHint': '（用于网页搜索）',
     'settings.memHeader': '记忆',
@@ -3036,6 +3076,40 @@ function _loadProviders() {
 function _saveProviders(obj) { try { localStorage.setItem(PROVIDERS_KEY, JSON.stringify(obj)); } catch {} }
 function _genProviderId() { return 'prov_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+const REASONING_CONTENT_MODES = new Set(['auto', 'on', 'off']);
+function normalizeReasoningContentMode(mode) {
+  const m = String(mode || 'auto').trim().toLowerCase();
+  return REASONING_CONTENT_MODES.has(m) ? m : 'auto';
+}
+function normalizeReasoningContentModelsMap(map) {
+  const out = {};
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return out;
+  Object.entries(map).forEach(([model, mode]) => {
+    const key = String(model || '').trim();
+    if (key) out[key] = normalizeReasoningContentMode(mode);
+  });
+  return out;
+}
+function isMimoReasoningModel(model = API_MODEL) {
+  const normalized = String(model || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return normalized.includes('xiaomimimo') || normalized.includes('mimo');
+}
+function isDefaultReasoningContentModel(model = API_MODEL) {
+  const p = ACTIVE_PROVIDER || {};
+  const haystack = [p.name, p.endpoint, p.defaultModel, model, _keys?.api_endpoint, CFG.api_endpoint].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes('deepseek') || isMimoReasoningModel(model);
+}
+function getReasoningContentModeForModel(model = API_MODEL) {
+  const key = String(model || '').trim();
+  return normalizeReasoningContentMode(key ? MODEL_REASONING_CONTENT[key] : 'auto');
+}
+function shouldKeepReasoningForModel(model = API_MODEL) {
+  const mode = getReasoningContentModeForModel(model);
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return isDefaultReasoningContentModel(model);
+}
+
 function migrateLegacyProviderSettingsIntoProfiles() {
   // If profiles already exist, do nothing.
   const existing = _loadProviders();
@@ -3048,12 +3122,13 @@ function migrateLegacyProviderSettingsIntoProfiles() {
   const legacyModels = _userSettings.api_models || CFG.api_models || [];
   const legacyDefaultModel = _userSettings.api_model || CFG.api_model || (legacyType === 'anthropic_compat' ? 'claude-sonnet-4-20250514' : 'gpt-4o');
   const legacyModelContexts = _userSettings.model_contexts || CFG.model_contexts || {};
+  const legacyReasoningContentModels = normalizeReasoningContentModelsMap(_userSettings.reasoning_content_models || CFG.reasoning_content_models || {});
 
   const id = _genProviderId();
   const name = legacyProvider + ' (migrated)';
   _saveProviders({
     providers: {
-      [id]: { id, name, type: legacyType, endpoint: legacyEndpoint, apiKey: legacyKey, models: legacyModels, defaultModel: legacyDefaultModel, model_contexts: legacyModelContexts }
+      [id]: { id, name, type: legacyType, endpoint: legacyEndpoint, apiKey: legacyKey, models: legacyModels, defaultModel: legacyDefaultModel, model_contexts: legacyModelContexts, reasoning_content_models: legacyReasoningContentModels }
     }
   });
   try { localStorage.setItem(ACTIVE_PROVIDER_KEY, id); } catch {}
@@ -3095,7 +3170,8 @@ const CONTEXT_AUTO_COMPACT_RATIO = 0.75;
 const CONTEXT_CRITICAL_RATIO = 0.90;
 const CONTEXT_MICRO_COMPACT_MIN_TOKENS = 2400;
 const CONTEXT_RECENT_MESSAGE_PROTECT_COUNT = 6;
-const MODEL_CONTEXTS = { ...(CFG.model_contexts || {}) };
+const MODEL_CONTEXTS = { ...(((ACTIVE_PROVIDER && ACTIVE_PROVIDER.model_contexts) || CFG.model_contexts || {})) };
+const MODEL_REASONING_CONTENT = { ...normalizeReasoningContentModelsMap((ACTIVE_PROVIDER && ACTIVE_PROVIDER.reasoning_content_models) || CFG.reasoning_content_models || {}) };
 let currentMaxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
 
 // API keys — fetched at init from /config endpoint, stored in closure
@@ -3258,12 +3334,15 @@ document.getElementById('providerSelect').addEventListener('change', e => {
     api_endpoint: (ACTIVE_PROVIDER.endpoint || ''),
     api_models: (ACTIVE_PROVIDER.models || []),
     api_model: API_MODEL,
-    model_contexts: (ACTIVE_PROVIDER.model_contexts || {})
+    model_contexts: (ACTIVE_PROVIDER.model_contexts || {}),
+    reasoning_content_models: normalizeReasoningContentModelsMap(ACTIVE_PROVIDER.reasoning_content_models || {})
   });
   CFG.api_endpoint = _keys.api_endpoint;
   // Update MODEL_CONTEXTS in place
   Object.keys(MODEL_CONTEXTS).forEach(k => delete MODEL_CONTEXTS[k]);
   if (_keys.model_contexts && typeof _keys.model_contexts === 'object') Object.assign(MODEL_CONTEXTS, _keys.model_contexts);
+  Object.keys(MODEL_REASONING_CONTENT).forEach(k => delete MODEL_REASONING_CONTENT[k]);
+  Object.assign(MODEL_REASONING_CONTENT, _keys.reasoning_content_models || {});
   applyModelContextLimit();
   // refresh SW config
   if (_swReady && navigator.serviceWorker?.controller) {
@@ -3296,12 +3375,6 @@ function getLLMUrl() {
   if (ep.includes('/chat/completions')) return ep;
   if (/\/v\d+$/.test(ep)) return ep + '/chat/completions';
   return ep + '/v1/chat/completions';
-}
-
-function isDeepSeekActiveProvider() {
-  const p = ACTIVE_PROVIDER || {};
-  const haystack = [p.name, p.endpoint, p.defaultModel, API_MODEL, _keys?.api_endpoint, CFG.api_endpoint].filter(Boolean).join(' ').toLowerCase();
-  return haystack.includes('deepseek');
 }
 
 function getAuthHeaders() {
@@ -7856,6 +7929,7 @@ function _applyProviderProfileToSettingsModal(p) {
   document.getElementById('setVideoStatusEndpoint').value = p.videoStatusEndpoint || '';
   const ctxs = p.model_contexts || {};
   renderModelContextsList(ctxs);
+  renderReasoningContentModelsList(p.reasoning_content_models || {});
 }
 
 function onProviderProfileSelect() {
@@ -7886,7 +7960,8 @@ function newProviderProfile() {
     imageEditEndpoint: '',
     videoGenerationEndpoint: '',
     videoStatusEndpoint: '',
-    model_contexts: {}
+    model_contexts: {},
+    reasoning_content_models: {}
   };
   _saveProviders({ providers });
   setActiveProviderId(id);
@@ -7910,7 +7985,10 @@ function deleteCurrentProviderProfile() {
   ACTIVE_PROVIDER = next ? providers[next] : null;
   renderProviderProfilesInSettings();
   if (ACTIVE_PROVIDER) _applyProviderProfileToSettingsModal(ACTIVE_PROVIDER);
-  else renderModelContextsList({});
+  else {
+    renderModelContextsList({});
+    renderReasoningContentModelsList({});
+  }
   renderProviderSelectInTopBar();
 }
 
@@ -7919,6 +7997,7 @@ function openSettingsModal() {
   const p = getActiveProviderProfile();
   renderProviderProfilesInSettings();
   renderModelContextsList({}); // reset; overridden below if a profile is active
+  renderReasoningContentModelsList({});
   if (p) {
     document.getElementById('setProviderProfile').value = p.id;
     _applyProviderProfileToSettingsModal(p);
@@ -8049,6 +8128,7 @@ function setSelectedModels(list) {
   const uniq = Array.from(new Set(list.filter(Boolean)));
   document.getElementById('setModels').value = uniq.join('\n');
   _mcUpdateModelDatalist();
+  _rcUpdateModelDatalist();
 }
 function addSelectedModelsToList() {
   const sel = document.getElementById('setAvailableModels');
@@ -8156,6 +8236,68 @@ function readModelContextsFromUI() {
   return out;
 }
 
+function _rcEffectiveLabel(model, mode) {
+  const effective = mode === 'on' || (mode === 'auto' && isDefaultReasoningContentModel(model));
+  return mode === 'auto' ? (effective ? 'Auto: On' : 'Auto: Off') : (effective ? 'On' : 'Off');
+}
+function _rcBuildRow(model, mode = 'auto') {
+  const normalizedMode = normalizeReasoningContentMode(mode);
+  const row = document.createElement('div');
+  row.className = 'rc-row';
+  row.dataset.model = model;
+  row.innerHTML =
+    '<span class="rc-model" title="' + _mcEsc(model) + '">' + _mcEsc(model) + '</span>' +
+    '<select class="rc-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select>' +
+    '<span class="rc-effective"></span>' +
+    '<button type="button" class="rc-remove" title="Remove" aria-label="Remove">&times;</button>';
+  const select = row.querySelector('.rc-mode');
+  const effective = row.querySelector('.rc-effective');
+  const refresh = () => { effective.textContent = _rcEffectiveLabel(model, normalizeReasoningContentMode(select.value)); };
+  select.value = normalizedMode;
+  select.addEventListener('change', refresh);
+  row.querySelector('.rc-remove').addEventListener('click', () => {
+    row.remove();
+    _rcUpdateEmptyState();
+    _rcUpdateModelDatalist();
+  });
+  refresh();
+  return row;
+}
+function _rcUpdateEmptyState() {
+  const list = document.getElementById('setReasoningContentList');
+  const empty = document.getElementById('setReasoningContentEmpty');
+  if (!list || !empty) return;
+  const hasRows = list.children.length > 0;
+  empty.style.display = hasRows ? 'none' : 'block';
+  list.style.display = hasRows ? '' : 'none';
+}
+function _rcUpdateModelDatalist() {
+  const dl = document.getElementById('setRcModelList');
+  if (!dl) return;
+  const selected = getCurrentSelectedModels();
+  const have = new Set(Array.from(document.querySelectorAll('#setReasoningContentList .rc-row')).map(r => r.dataset.model));
+  dl.innerHTML = selected.filter(m => !have.has(m)).map(m => '<option value="' + _mcEsc(m) + '"></option>').join('');
+}
+function renderReasoningContentModelsList(configs) {
+  const list = document.getElementById('setReasoningContentList');
+  if (!list) return;
+  list.innerHTML = '';
+  Object.entries(normalizeReasoningContentModelsMap(configs || {})).forEach(([model, mode]) => {
+    list.appendChild(_rcBuildRow(model, mode));
+  });
+  _rcUpdateEmptyState();
+  _rcUpdateModelDatalist();
+}
+function readReasoningContentModelsFromUI() {
+  const out = {};
+  document.querySelectorAll('#setReasoningContentList .rc-row').forEach(row => {
+    const model = String(row.dataset.model || '').trim();
+    const mode = normalizeReasoningContentMode(row.querySelector('.rc-mode')?.value || 'auto');
+    if (model) out[model] = mode;
+  });
+  return out;
+}
+
 function addModelContextFromInputs() {
   const mi = document.getElementById('setMcNewModel');
   const vi = document.getElementById('setMcNewValue');
@@ -8194,6 +8336,43 @@ function syncModelContextsFromSelected() {
   _mcUpdateModelDatalist();
 }
 
+function addReasoningContentModelFromInputs() {
+  const mi = document.getElementById('setRcNewModel');
+  const si = document.getElementById('setRcNewMode');
+  const status = document.getElementById('setStatus');
+  const model = (mi.value || '').trim();
+  const mode = normalizeReasoningContentMode(si.value || 'auto');
+  if (!model) { status.textContent = 'Enter a model id'; mi.focus(); return; }
+  const list = document.getElementById('setReasoningContentList');
+  const existing = Array.from(list.querySelectorAll('.rc-row')).find(r => r.dataset.model === model);
+  if (existing) {
+    existing.querySelector('.rc-mode').value = mode;
+    existing.querySelector('.rc-mode').dispatchEvent(new Event('change'));
+    existing.scrollIntoView({ block: 'nearest' });
+  } else {
+    list.appendChild(_rcBuildRow(model, mode));
+  }
+  mi.value = '';
+  si.value = 'auto';
+  status.textContent = existing ? ('Updated reasoning mode for "' + model + '"') : ('Added reasoning mode for "' + model + '"');
+  _rcUpdateEmptyState();
+  _rcUpdateModelDatalist();
+  mi.focus();
+}
+
+function syncReasoningContentFromSelected() {
+  const selected = getCurrentSelectedModels();
+  const status = document.getElementById('setStatus');
+  if (!selected.length) { status.textContent = 'No selected models to import'; return; }
+  const list = document.getElementById('setReasoningContentList');
+  const have = new Set(Array.from(list.querySelectorAll('.rc-row')).map(r => r.dataset.model));
+  let added = 0;
+  selected.forEach(m => { if (!have.has(m)) { list.appendChild(_rcBuildRow(m, 'auto')); added++; } });
+  status.textContent = added ? ('Added ' + added + ' reasoning mode row(s)') : 'All selected models already listed';
+  _rcUpdateEmptyState();
+  _rcUpdateModelDatalist();
+}
+
 async function saveSettings() {
   // Save provider profile
   const profId = document.getElementById('setProviderProfile').value || _genProviderId();
@@ -8212,9 +8391,10 @@ async function saveSettings() {
   const videoGenerationEndpoint = document.getElementById('setVideoGenerationEndpoint').value.trim();
   const videoStatusEndpoint = document.getElementById('setVideoStatusEndpoint').value.trim();
   const model_contexts = readModelContextsFromUI();
+  const reasoning_content_models = readReasoningContentModelsFromUI();
 
   const providers = getProvidersMap();
-  providers[profId] = { id: profId, name, type, endpoint, apiKey, models, defaultModel: defaultModel || models[0] || '', imageModels, videoModels, defaultImageModel, defaultVideoModel, imageGenerationEndpoint, imageEditEndpoint, videoGenerationEndpoint, videoStatusEndpoint, model_contexts };
+  providers[profId] = { id: profId, name, type, endpoint, apiKey, models, defaultModel: defaultModel || models[0] || '', imageModels, videoModels, defaultImageModel, defaultVideoModel, imageGenerationEndpoint, imageEditEndpoint, videoGenerationEndpoint, videoStatusEndpoint, model_contexts, reasoning_content_models };
   _saveProviders({ providers });
   setActiveProviderId(profId);
   ACTIVE_PROVIDER = providers[profId];
@@ -8298,11 +8478,14 @@ async function saveSettings() {
     api_endpoint: endpoint,
     api_models: models,
     api_model: ACTIVE_PROVIDER.defaultModel || '',
-    model_contexts
+    model_contexts,
+    reasoning_content_models
   });
   CFG.api_endpoint = endpoint;
   Object.keys(MODEL_CONTEXTS).forEach(k => delete MODEL_CONTEXTS[k]);
   Object.assign(MODEL_CONTEXTS, model_contexts);
+  Object.keys(MODEL_REASONING_CONTENT).forEach(k => delete MODEL_REASONING_CONTENT[k]);
+  Object.assign(MODEL_REASONING_CONTENT, reasoning_content_models);
 
   // Choose active model
   const desired = (defaultModel && models.includes(defaultModel)) ? defaultModel : (models.includes(API_MODEL) ? API_MODEL : (models[0] || API_MODEL));
@@ -11729,9 +11912,7 @@ async function buildSubAgentRequestBody(subMessages, headId, options = {}) {
     parts.volatileSystemPrompt += getBlackboardDigestForWorker();
   }
   parts.systemPrompt = (parts.stableSystemPrompt || '') + parts.volatileSystemPrompt;
-  const body = assembleRequestBodyFromParts(parts);
-  if (options.modelOverride) body.model = options.modelOverride;
-  return body;
+  return assembleRequestBodyFromParts(parts, { model: options.modelOverride || API_MODEL });
 }
 function extractAssistantText(content) {
   if (typeof content === 'string') return content;
@@ -11807,9 +11988,10 @@ async function runSubAgentLoop({ run, task, context, maxSteps, roleConfig, model
     const resp = await sendLLMRequestBody(body, abortCtrl?.signal);
     if (!resp.ok) return { ok: false, text: `Sub-agent API Error (${resp.status}): ${(await resp.text()).slice(0, 500)}`, steps: step, tokens: workerTokens };
     const reader = resp.body.getReader();
+    const keepReasoning = shouldKeepReasoningForModel(body.model || API_MODEL);
     const result = PROVIDER === 'anthropic_compat'
       ? await parseAnthropicStream(reader, () => {}, () => {}, () => {}, () => {})
-      : await parseOpenAIStream(reader, () => {}, () => {}, () => {}, () => {}, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
+      : await parseOpenAIStream(reader, () => {}, () => {}, () => {}, () => {}, { keepReasoning, includeReasoningUsage: keepReasoning });
     if (result.stream_error) return { ok: false, text: `Sub-agent stream interrupted: ${result.stream_error}`, steps: step, tokens: workerTokens };
     // Track tokens for swarm budget
     const usage = result.usage || {};
@@ -14013,10 +14195,11 @@ function looksLikeCacheControlCompatError(status, text) {
   const s = String(text || '').toLowerCase();
   return status === 400 && (s.includes('cache_control') || s.includes('cache control') || (s.includes('system') && (s.includes('array') || s.includes('text block') || s.includes('object'))));
 }
-function assembleRequestBodyFromParts(parts) {
+function assembleRequestBodyFromParts(parts, options = {}) {
+  const requestModel = String(options.model || API_MODEL || '').trim() || API_MODEL;
   if (PROVIDER === 'anthropic_compat') {
     const body = {
-      model: API_MODEL,
+      model: requestModel,
       max_tokens: ANTHROPIC_MAX_TOKENS,
       system: buildAnthropicSystemForCache(parts),
       messages: parts.projectedMessages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
@@ -14025,7 +14208,7 @@ function assembleRequestBodyFromParts(parts) {
     return applyThinkingToRequestBody(body, 'anthropic');
   }
   const oai = [{ role: 'system', content: parts.systemPrompt }];
-  const keepReasoning = isDeepSeekActiveProvider();
+  const keepReasoning = shouldKeepReasoningForModel(requestModel);
   const skippedToolResultIds = new Set();
   for (const m of parts.projectedMessages) {
     if (m.role === 'user') {
@@ -14065,7 +14248,7 @@ function assembleRequestBodyFromParts(parts) {
       } else oai.push({ role: 'assistant', content: m.content });
     }
   }
-  return applyThinkingToRequestBody({ model: API_MODEL, messages: oai, tools: parts.openaiTools }, PROVIDER);
+  return applyThinkingToRequestBody({ model: requestModel, messages: oai, tools: parts.openaiTools }, PROVIDER);
 }
 function estimateContextPartTokens(parts, body) {
   const breakdown = {
@@ -14710,6 +14893,7 @@ async function _runAgentLoop(userText, options = {}) {
       const requestSnapshot = await buildContextSnapshot(requestMessages, promptEntryId, { memoryRecallKey });
       applyContextSnapshot(requestSnapshot);
       const body = await buildRequestBody(requestMessages, promptEntryId, { memoryRecallKey });
+      const keepReasoning = shouldKeepReasoningForModel(body.model || API_MODEL);
       let estimatedRequestTokens = requestSnapshot.totalEstimatedTokens || estimateRequestBodyTokens(body);
       body.stream = true;
       if (PROVIDER !== 'anthropic_compat') {
@@ -14798,7 +14982,7 @@ async function _runAgentLoop(userText, options = {}) {
       try {
         result = PROVIDER === 'anthropic_compat'
           ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta)
-          : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
+          : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning, includeReasoningUsage: keepReasoning });
       } catch (e) {
         if (isAbortError(e)) throw e;
         result = { content: fullText ? [{ type: 'text', text: fullText }] : [], stop_reason: 'interrupted', usage_total: 0, stream_error: e?.message || String(e || 'Network error') };
@@ -14819,7 +15003,7 @@ async function _runAgentLoop(userText, options = {}) {
       totalTokens += turnTokens;
       lastTurnTokens = turnTokens;
       lastUsageInfo = result.usage || null;
-      const usageDetails = extractUsageDetails(result.usage, { includeReasoningDetails: isDeepSeekActiveProvider() });
+      const usageDetails = extractUsageDetails(result.usage, { includeReasoningDetails: keepReasoning });
       lastInputTokens = usageDetails?.input || estimatedRequestTokens;
       lastOutputTokens = usageDetails?.output || estimatedOutputTokens;
       lastCacheReadTokens = usageDetails?.cacheRead || 0;
