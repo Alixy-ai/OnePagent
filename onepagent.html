@@ -6551,6 +6551,7 @@ function assessSkillRisk(skill, operation, oldSkill = null, options = {}) {
   if (operation === 'remove') reasons.push('This deletes the skill metadata and stored files.');
   if (operation === 'install' && oldSkill) reasons.push(`This overwrites existing skill "${oldSkill.name}".`);
   if (operation === 'install_github') reasons.push('This installs skill files from a remote GitHub repository.');
+  if ((operation === 'install' || operation === 'install_github' || operation === 'create') && Object.keys(skill.scripts || {}).length) reasons.push('Skill defines executable skill scripts.');
   if ((operation === 'install' || operation === 'install_github' || operation === 'create' || operation === 'update') && skillHasExecutableHandlers(skill)) reasons.push('Skill defines executable tool handlers.');
   if (operation === 'set_active' && options.active === true && skillHasExecutableHandlers(skill)) reasons.push('Activating this skill can expose executable handlers to the agent.');
   if (operation === 'update') {
@@ -11621,6 +11622,25 @@ async function toolSkillManager(input = {}) {
     if (input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, source, overwrite: !!oldSkill, risk, summary: `Installing remote GitHub skill "${skill.name}" requires confirmation.` });
     installSkill(skill);
     return skillManagerResult({ ok: true, action, summary: `Installed skill "${skill.name}" from GitHub.`, source, skill: serializeSkillForTool(skill), warnings: risk.reasons });
+  }
+
+  if (action === 'install_from_workspace') {
+    let imported;
+    try {
+      imported = await skillFromWorkspacePath(input.path);
+    } catch (e) {
+      return skillManagerError(action, e?.message || String(e));
+    }
+    const { skill, root, manifest } = imported;
+    normalizeSkill(skill, { source: `workspace:${root}` });
+    const oldSkill = skills.find(s => s.name === skill.name);
+    const errors = validateSkillInput(skill, { operation: 'install' });
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors, source: { root, manifest } });
+    const risk = assessSkillRisk(skill, 'install', oldSkill);
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, source: { root, manifest }, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }), overwrite: !!oldSkill, risk });
+    if (requiresSkillManagerConfirmation(risk, 'install') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, source: { root, manifest }, overwrite: !!oldSkill, risk, summary: `Installing workspace skill "${skill.name}" requires confirmation.` });
+    installSkill(skill);
+    return skillManagerResult({ ok: true, action, summary: `Installed skill "${skill.name}" from workspace.`, source: { root, manifest }, skill: serializeSkillForTool(skill), warnings: risk.reasons });
   }
 
   if (action === 'update') {
