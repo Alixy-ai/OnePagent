@@ -7093,6 +7093,54 @@ function _putSkillAsset(skill, rel, bytes, isBinary) {
   if (rel.startsWith('references/')) skill.references[rel.slice(11)] = text;
   else if (rel.startsWith('scripts/')) skill.scripts[rel.slice(8)] = text;
 }
+async function skillFromWorkspacePath(path) {
+  const requestedPath = String(path || '').trim();
+  if (!requestedPath) throw new Error('path is required.');
+
+  const resolvedPath = normPath(requestedPath);
+  const node = vfsResolve(resolvedPath);
+  if (!node) throw new Error(`Workspace path not found: ${resolvedPath}`);
+
+  let rootPath = resolvedPath;
+  let manifestPath = resolvedPath;
+  if (node.type === 'dir') {
+    manifestPath = normPath(`${resolvedPath}/SKILL.md`);
+    const manifestNode = vfsResolve(manifestPath);
+    if (!manifestNode) throw new Error(`No SKILL.md found in workspace directory: ${resolvedPath}`);
+    if (manifestNode.type !== 'file') throw new Error(`SKILL.md is not a file: ${manifestPath}`);
+  } else if (node.type === 'file') {
+    if (_pathBaseName(resolvedPath) !== 'SKILL.md') throw new Error('Workspace file path must point to SKILL.md.');
+    rootPath = _pathDirName(resolvedPath);
+  } else {
+    throw new Error(`Unsupported workspace path type: ${resolvedPath}`);
+  }
+
+  const manifestStat = vfsStat(manifestPath);
+  if (!manifestStat || manifestStat.type !== 'file') throw new Error(`Workspace manifest not found: ${manifestPath}`);
+  if (manifestStat.binary) throw new Error(`Workspace manifest must be text: ${manifestPath}`);
+
+  const manifest = vfsRead(manifestPath);
+  if (manifest.error) throw new Error(`Failed to read workspace manifest: ${manifest.error}`);
+
+  const skill = skillFromMd(manifest.content, `workspace:${rootPath}`);
+  if (!skill.references) skill.references = {};
+  if (!skill.scripts) skill.scripts = {};
+  if (!skill.files) skill.files = {};
+  if (!skill.binaryFiles) skill.binaryFiles = {};
+
+  const { files } = await _collectVfsFiles(rootPath);
+  for (const file of files.sort((a, b) => a.rel.localeCompare(b.rel))) {
+    if (file.path === manifestPath || file.rel === 'SKILL.md') continue;
+    if (file.binary) {
+      _putSkillAsset(skill, file.rel, file.bytes, true);
+    } else {
+      _putSkillAsset(skill, file.rel, new TextEncoder().encode(file.content || ''), false);
+    }
+  }
+
+  skill.source = `workspace:${rootPath}`;
+  return { skill, root: rootPath, manifest: manifestPath };
+}
 async function fetchGithubJson(apiUrl) {
   const resp = await fetch(apiUrl);
   if (!resp.ok) throw new Error(`GitHub API HTTP ${resp.status}`);
