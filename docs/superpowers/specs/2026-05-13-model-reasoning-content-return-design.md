@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make OpenAI-compatible `reasoning_content` preservation and multi-turn return configurable per model, while preserving the current DeepSeek behavior and meeting MiMo API requirements for tool-call histories.
+Make OpenAI-compatible `reasoning_content` preservation and multi-turn return configurable per model, while preserving the current DeepSeek behavior and supporting the same tool-call history return contract for any model where the setting is enabled.
 
 ## Context
 
@@ -14,21 +14,23 @@ OnePagent currently decides whether to preserve and return OpenAI-compatible `re
 
 The new behavior must be bound to model settings, not only provider detection.
 
-## Required MiMo behavior
+## Required return contract
 
-When MiMo thinking mode is active in an agent-style multi-turn conversation, and historical assistant messages contain tool calls, every later user turn must return the complete `reasoning_content` for assistant messages that contain tool calls. If those historical `reasoning_content` fields are missing, the MiMo API can return HTTP 400 because the model context is incomplete. Missing reasoning can also reduce instruction following and increase hallucinations.
+When reasoning-content return is enabled for the current model, the app must use the same multi-turn return method for DeepSeek, MiMo, and any other OpenAI-compatible model that exposes `reasoning_content`.
 
-This requirement overrides a user-configured Off state for the affected historical tool-call assistant messages. The app must avoid constructing requests that are known to violate the MiMo tool-call history contract.
+In agent-style multi-turn conversations, if historical assistant messages contain tool calls, every later user turn must return the complete `reasoning_content` for those assistant messages when it is available. If historical tool-call assistant reasoning is omitted, some providers can return HTTP 400 because the model context is incomplete. Missing reasoning can also reduce instruction following and increase hallucinations.
+
+This is a generic contract for the enabled model, not a MiMo-only rule. The setting means “preserve and return reasoning_content for this model”; once enabled, the return behavior applies to all later request construction for that model.
 
 ## Chosen approach
 
-Add per-model reasoning-content return settings with a safe effective policy.
+Add per-model reasoning-content return settings.
 
 The setting is model-bound and stored alongside provider profile settings. Each configured model uses one of three modes:
 
 - `auto`: use built-in defaults.
 - `on`: preserve and return reasoning content for that model.
-- `off`: do not preserve or return reasoning content, except when MiMo tool-call history requires it.
+- `off`: do not preserve or return reasoning content for that model.
 
 Default effective behavior:
 
@@ -52,14 +54,15 @@ Add helpers:
 function getReasoningContentModeForModel(model = API_MODEL) { ... }
 function isDefaultReasoningContentModel(model = API_MODEL) { ... }
 function isMimoReasoningModel(model = API_MODEL) { ... }
-function shouldKeepReasoningForModel(model = API_MODEL, options = {}) { ... }
+function shouldKeepReasoningForModel(model = API_MODEL) { ... }
 ```
 
 `shouldKeepReasoningForModel` returns true when:
 
 1. The model is explicitly set to `on`.
 2. The model is `auto` and default detection says DeepSeek or MiMo should preserve reasoning.
-3. The current model is MiMo and the request context contains historical assistant tool calls that require complete `reasoning_content`, even if the model is explicitly set to `off`.
+
+It returns false when the model is explicitly set to `off`, or when `auto` detection does not match a reasoning-content model.
 
 Replace direct `isDeepSeekActiveProvider()` usage in reasoning paths with the helper:
 
@@ -74,9 +77,9 @@ The top-bar Think level remains separate. It controls request parameters such as
 For OpenAI-compatible request assembly:
 
 - If effective keep is on, preserve current behavior: assistant `reasoning` blocks are emitted as `reasoning_content`, tool calls remain attached, and incompatible tool results are skipped when reasoning is missing.
-- If effective keep is off and no MiMo tool-call requirement applies, assistant messages are emitted without `reasoning_content`.
-- If effective keep is off but MiMo tool-call history requires reasoning, force keep for assistant messages with tool calls. This prevents known 400 responses.
-- If a historical assistant tool-call message has no stored reasoning block because it was created before this feature or imported from another source, preserve the existing fallback behavior that avoids sending an invalid assistant tool-call message without reasoning; do not invent reasoning text.
+- If effective keep is off, assistant messages are emitted without `reasoning_content`.
+- If a historical assistant tool-call message has no stored reasoning block because it was created before this feature, was captured while the model was Off, or was imported from another source, preserve the existing fallback behavior that avoids sending an invalid assistant tool-call message without reasoning; do not invent reasoning text.
+- Turning a model On affects subsequent parsed reasoning blocks and subsequent request construction. It cannot restore reasoning that was never stored.
 
 ## Settings UI
 
@@ -101,7 +104,7 @@ Provider profile save/load should include `reasoning_content_models`. Switching 
 1. User opens Settings and configures per-model reasoning content mode.
 2. Save writes `reasoning_content_models` into the active provider profile/settings.
 3. Model selection or provider switching refreshes `MODEL_REASONING_CONTENT`.
-4. Request construction calls `shouldKeepReasoningForModel(API_MODEL, contextOptions)`.
+4. Request construction calls `shouldKeepReasoningForModel(API_MODEL)`.
 5. Stream parsing uses the same effective decision to retain or discard current-round reasoning blocks.
 6. Token accounting includes reasoning details only when effective keep is on.
 
@@ -111,8 +114,8 @@ Provider profile save/load should include `reasoning_content_models`. Switching 
 - Invalid mode values: treat as `auto`.
 - Empty model ids: do not save.
 - Non-object imported maps: ignore.
-- MiMo tool-call history requirement takes precedence over explicit Off to avoid known 400 errors.
 - Existing conversations continue to render old reasoning blocks normally.
+- If a model is Off and the provider rejects a later request because it expected historical reasoning, the user should enable reasoning-content return for that model and retry. The app should not silently fabricate missing reasoning.
 
 ## Testing
 
@@ -121,12 +124,13 @@ Manual and lightweight code-path tests should cover:
 1. DeepSeek default: no explicit setting returns effective keep=true.
 2. MiMo default: no explicit setting returns effective keep=true.
 3. Normal OpenAI model default: effective keep=false.
-4. DeepSeek explicit Off: effective keep=false when there is no MiMo tool-call history requirement.
-5. MiMo explicit Off with historical assistant tool calls: effective keep=true for required tool-call assistant messages.
+4. DeepSeek explicit Off: effective keep=false.
+5. MiMo explicit Off: effective keep=false.
 6. Normal model explicit On: parse stream keeps reasoning block and request assembly returns `reasoning_content`.
 7. Settings UI add/save/delete/switch provider preserves `reasoning_content_models`.
-8. Multi-turn request assembly: On includes assistant `reasoning_content`; Off omits it; MiMo tool-call requirement forces it.
-9. Stream parse call sites use the same helper in normal chat and sub-agent flows.
+8. Multi-turn request assembly: On includes assistant `reasoning_content`; Off omits it.
+9. Tool-call history with On: assistant tool-call messages return complete stored `reasoning_content` when available.
+10. Stream parse call sites use the same helper in normal chat and sub-agent flows.
 
 ## Scope
 
