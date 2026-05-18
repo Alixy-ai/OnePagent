@@ -12140,6 +12140,14 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
   }).map(t => {
     if (!_remote) return t;
     if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux container). Working directory defaults to /workspace, which mirrors the entire VFS (files are uploaded before the run and pulled back after). Use this for everything: shell utilities, python3 / pip, node / npm, file ops, network calls, etc. Pip/npm installs and any /workspace changes persist across calls within the same conversation.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
+    // File-system tools stay on the local VFS, but the VFS is the authoritative
+    // mirror of /workspace in the sandbox: writes flow to the sandbox before the
+    // next Bash call, sandbox writes flow back after each call. Add a clarifying
+    // suffix so the model knows the path mapping (e.g. VFS /foo → /workspace/foo).
+    const remoteFsNote = ' Remote sandbox mode: the VFS path you pass here maps to /workspace<vfs path> inside the Daytona container (e.g. /data.csv ↔ /workspace/data.csv). Changes made via Bash to /workspace files automatically appear in the VFS after that Bash call returns, and edits via this tool are pushed to the sandbox before the next Bash call.';
+    if (t.name === 'Read' || t.name === 'Write' || t.name === 'Edit' || t.name === 'Glob' || t.name === 'Grep') {
+      return { ...t, description: (t.description || '') + remoteFsNote };
+    }
     return t;
   });
   if (pyodideInstance) allToolsAnthropic.push(...PYODIDE_NATIVE_TOOLS);
@@ -12202,11 +12210,17 @@ async function executeTool(name, input) {
       case 'Glob': return toolGlob(input);
       case 'Grep': return toolGrep(input);
       case 'Bash': return await (isRemoteSandbox() ? toolBashRemote(input) : toolBash(input));
-      case 'PythonExec': return await (isRemoteSandbox() ? toolPythonExecRemote(input) : toolPythonExec(input));
+      case 'PythonExec':
+        if (isRemoteSandbox()) return 'Error: PythonExec is disabled when the remote sandbox is active. Use Bash instead — e.g. `python3 -c "..."` or `python3 /workspace/script.py`. Pip installs and /workspace changes persist across Bash calls.';
+        return await toolPythonExec(input);
       case 'VfsToPyodide': return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'PyodideToVfs': return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
-      case 'JSExec': return await (isRemoteSandbox() ? toolJSExecRemote(input) : toolJSExec(input));
-      case 'NodeExec': return await toolNodeExec(input);
+      case 'JSExec':
+        if (isRemoteSandbox()) return 'Error: JSExec is disabled when the remote sandbox is active. Use Bash with `node` instead — e.g. `node -e "..."` or `node /workspace/script.js`. Npm installs and /workspace changes persist across Bash calls.';
+        return await toolJSExec(input);
+      case 'NodeExec':
+        if (isRemoteSandbox()) return 'Error: NodeExec is disabled when the remote sandbox is active. Use Bash with `node` and `npm` instead. /workspace is your project root and persists across Bash calls.';
+        return await toolNodeExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
       case 'RunSubAgent': return await toolRunSubAgent(input);
@@ -14666,7 +14680,7 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const ralphPrompt = getRalphLoopPrompt();
-  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. The ONLY execution tool exposed is Bash — do not look for PythonExec / JSExec / NodeExec / Pyodide tools, they are intentionally disabled in this mode. Run code by invoking interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`, etc. The entire VFS is mirrored at /workspace (uploaded before each Bash call and pulled back after). cwd defaults to /workspace, so reference files by their VFS path with `/workspace` prepended (e.g. VFS `/data.csv` → sandbox `/workspace/data.csv`). Pip/npm installs and any /workspace changes persist across Bash calls in the same conversation.' : '';
+  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /workspace changes persist across Bash calls within this conversation.\n- **Read / Write / Edit / Glob / Grep** operate on the VFS, which is mirrored to /workspace in the sandbox: the entire VFS is uploaded before every Bash call, and any changes you make in /workspace via Bash are pulled back into the VFS after the call returns. So a file written by Bash to /workspace/out.txt is immediately readable via Read("/out.txt"), and a Write/Edit you do here appears at /workspace/<path> in the next Bash call.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- Path mapping: VFS `/foo/bar.py` ↔ sandbox `/workspace/foo/bar.py`. cwd for Bash defaults to /workspace.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
