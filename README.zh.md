@@ -44,11 +44,15 @@
 | 长期记忆 | 可选开启，跨会话持久保留事实 / 偏好 / 事件 / 技能，自动提取 + Agent 工具调用 + 手动增删，标签与关键词检索 |
 | MCP 服务器 | 粘贴 `mcpServers` JSON 即可导入（`streamable_http` / `sse`），支持 Bearer 鉴权与 CORS 代理 |
 | Plan Mode | Agent 先只读调研，生成 Markdown 计划供审批，批准后才执行写入 |
+| Ralph Loop | 无人值守的 continue-until-done 模式，支持完成标记、最大/无限迭代、Stop 和无进展保护 |
+| Sub-agents | 委派有边界的只读调研任务，并在侧栏监控运行状态 |
+| Agent Swarm | 可选启用的并行 orchestrator-worker 蜂群：lead 一轮内发出多个 `SwarmSpawn`，按角色（researcher / critic / writer / coder）并发执行，带 token 预算与并发上限 |
+| Human-in-the-loop | Agent 可在需要用户判断时请求文本、选择或确认 |
 | TodoWrite | Agent 主动维护可视任务清单（pending / in-progress / completed） |
 | Hooks | 用户自定义 JS 处理函数，挂在 Agent 6 个生命周期事件上 |
 | Python 沙箱 | 通过 Pyodide 在浏览器内执行 Python |
 | Web Search | Tavily 集成，`basic` / `advanced` 两档搜索深度 |
-| Skills 系统 | `.skill` / `.zip` 安装，GitHub 拉取，或界面直接创建 |
+| Skills 系统 | `.skill` / `.zip` 安装，GitHub 拉取，界面创建，或让 AI 通过 `SkillManager` 管理技能 |
 | 会话管理 | 多会话、文件夹分组、拖拽排序、IndexedDB 持久化、一键导出 |
 | Cloud Sync | S3 兼容桶增量同步，可选 AES-256-GCM 端到端加密 |
 
@@ -106,6 +110,14 @@ npx serve .
 
 ---
 
+## Skills 技能
+
+可在左侧 **Skills** 面板通过 Market、`.skill/.zip`、GitHub 或 Create 安装技能。GitHub 目录链接可直接使用，例如 `https://github.com/anthropics/skills/tree/main/skills/skill-creator`。
+
+Agent 也可以通过 `SkillManager` 列出、安装、更新、启用/停用或删除技能；远程安装和破坏性/高风险变更会要求确认。
+
+---
+
 ## Deploy
 
 OnePagent 是纯静态站点，任意静态主机均可运行：
@@ -133,47 +145,68 @@ OnePagent 是纯静态站点，任意静态主机均可运行：
 
 ## Cloud Sync
 
-通过 S3 兼容桶备份和跨设备同步，**不经过 OnePagent 任何服务器**。
+通过任意 S3 兼容桶备份和跨设备同步，配置路径是 **Settings → Cloud Sync**。
 
-- 支持 AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO
-- SHA-256 内容寻址，增量同步，二进制去重
-- 可选 AES-256-GCM 端到端加密（PBKDF2-SHA256 / 200k 迭代）
-- LLM 密钥不同步，始终留在本机
+- 支持 AWS S3、Cloudflare R2、Backblaze B2 和 MinIO。
+- 必填：Endpoint、Region、Bucket、Access Key ID、Secret Access Key。
+- 可选：Prefix、AES-256-GCM 加密口令、自动推送，以及 MinIO / R2 常用的 path-style URL。
+- 先在 Settings 中 **Test connection** / **Show CORS config**，再用顶栏 **Sync → Push now / Pull now**。
+- LLM 密钥不同步，始终留在本机。
 
-配置路径：**Settings → Cloud Sync** → 填写 Endpoint / Region / Bucket / 凭据 → Test connection → Push now。
+---
 
-| 后端 | Endpoint | Region | Path-style |
-|---|---|---|---|
-| AWS S3 | `https://s3.<region>.amazonaws.com` | 真实 region | 推荐 |
-| Cloudflare R2 | `https://<account_id>.r2.cloudflarestorage.com` | `auto` | 必须 |
-| MinIO | `https://<your-host>` | 自定义 | 必须 |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | 如 `us-west-002` | 必须 |
+## Ralph Loop
+
+Ralph Loop 会在普通回答结束后继续推进同一任务。点击顶栏 **Ralph**，正常发送任务，OnePagent 会自动续跑，直到看到完成标记或被保护条件停止。
+
+- 配置路径：**Settings → Ralph Loop**，可设置最大迭代、**Unlimited** 和完成标记（默认 `RALPH_DONE`）。
+- 顶栏 **Stop** 可取消当前 run。
+- `AskUser` 会使用默认值或取消，不弹窗；Plan Mode 不会自动批准。
+
+示例：`检查这个页面，能修就修，完成后包含 RALPH_DONE。`
 
 ---
 
 ## Memory
 
-跨对话持久化的长期记忆系统，与上下文压缩（压的是当前会话窗口）完全不同——此处记录的是**跨会话可复用的事实**。
+长期记忆保存跨对话可复用的事实，配置路径是 **Settings → Memory**。
 
-> **公式**：Memory = 信息 + 时间标签 + 可搜索关系（标签）
+- 在 IndexedDB 中保存 `fact` / `preference` / `event` / `skill` / `note`。
+- 可选自动提取，在助手回答后保留耐用事实。
+- 召回结合时效、标签、关键词和 prompt caching。
+- 工具：`memory_save`、`memory_search`、`memory_update`、`memory_forget`。
+- Memory Viewer 支持搜索、过滤、JSON 导入导出和废弃记录查看。
 
-- **存储**：独立 IndexedDB（`ba_memories`），参与 Cloud Sync 增量同步
-- **默认关闭**：在 **Settings → Memory** 勾选启用；可单独关闭自动提取
-- **五种类型**：`fact` / `preference` / `event` / `skill` / `note`
-- **三种来源**：`auto`（LLM 自动提取）/ `tool`（Agent 主动调用）/ `manual`（手动添加）
-- **自动提取**：每轮助手回答后追加一次轻量级 LLM 调用，只保留真正耐用的事实，可指定专用提取模型
-- **召回策略**：按**时效 + 标签重叠 + 关键词匹配**综合排序，取 Top-N（可配置，默认 8）注入系统提示
-- **Agent 工具**：`memory_save` / `memory_search` / `memory_update` / `memory_forget`，支持 `supersedesIds` 让新记忆替代过时记忆
-- **Memory Viewer**：顶栏按钮进入，支持搜索、按类型/来源过滤、标签云、JSON 导入导出、显示已废弃记录
-- **废弃而非删除**：被 supersedes 的记录保留历史但不再召回，可在 Viewer 中查看
+---
+
+## Agent Workflow
+
+- **Sub-agents**：主 Agent 可启动有边界的只读调研 worker，侧栏显示运行状态和摘要。
+- **Human-in-the-loop**：`AskUser` 支持文本、选择和确认，用于不该让模型猜的决策。
+- **Media tools**：图片/视频生成通过工具和配置的生成模型显式触发，不再每轮自动生成。
+- **Diagnostics**：文件系统诊断入口位于 **Settings → Diagnostics**。
+
+---
+
+## Agent Swarm
+
+可选启用的并行多 agent 运行时。开关位于 **Settings → Agent Swarm**。
+
+- **Fanout（扇出）**——lead 一轮内发出多个 `SwarmSpawn(role, task)`，按 *Max concurrency* 并行执行。内置角色：researcher、critic、writer、coder。
+- **Handoff（接力）**——worker 调 `SwarmHandoff(role, brief)` 串成 `researcher → critic → writer`；环检测与深度超限会被拒绝。
+- **Blackboard（黑板）**——单轮共享工作台：`bb_write` / `bb_read` / `bb_list` / `bb_post_task` / `bb_claim`，最新条目自动注入 worker prompt。
+- **自定义角色**——左栏 **Swarms** 面板管理：独立 system prompt、工具白名单、handoff 目标、预算；`bindSkills` 直接授予已装技能的工具；支持 JSON 导入/导出。
+- **RoleManager**（可选）——lead 专用工具，可在任务中即时 create / update / delete / duplicate 角色。存储模式三选一：内存 / 全局 / 按对话。内置与用户编写的角色受保护。
+
+护栏：单 worker 与单轮总 token 预算、并发上限、Plan Mode 继承、Ralph 互斥、防递归。Hooks 新增 `pre_swarm_spawn` / `post_swarm_spawn`。可设 *Worker model override*（如 Haiku）让 worker 跑廉价模型、lead 留给旗舰模型。
+
+适用于广度优先任务（多源调研、对比分析），不适合紧耦合的代码重构。
 
 ---
 
 ## Configuration
 
-配置与会话全部存于浏览器本地（`localStorage` + `IndexedDB`），不上传任何第三方服务器。
-
-**Privacy Model**：浏览器 → Service Worker 注入密钥 → 你配置的 API Endpoint。OnePagent 本身没有服务端。
+配置与会话都存于浏览器本地（`localStorage` + `IndexedDB`）。OnePagent 没有服务端，请求只发往你配置的 API Endpoint。
 
 ---
 

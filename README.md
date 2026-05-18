@@ -44,11 +44,15 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Long-term memory | Opt-in persistent facts / preferences / events / skills across sessions — auto-extraction, agent tools, manual CRUD, tag & keyword search |
 | MCP Servers | Paste `mcpServers` JSON to import (`streamable_http` / `sse`), Bearer auth, optional CORS proxy |
 | Plan Mode | Agent investigates with read-only tools, drafts a Markdown plan for approval, then executes |
+| Ralph Loop | Fully unattended continue-until-done mode with marker, max/unlimited iterations, Stop, and no-progress guard |
+| Sub-agents | Delegate bounded read-only research tasks and monitor runs in the side panel |
+| Agent Swarm | Opt-in parallel orchestrator-worker fanout: lead emits multiple `SwarmSpawn` calls in one turn, role-scoped workers (researcher / critic / writer / coder) run concurrently with token budgets |
+| Human-in-the-loop | Agent can ask for text, choices, or confirmations when a task needs user input |
 | TodoWrite | Agent maintains a visible task list (pending / in-progress / completed) |
 | Hooks | User-defined JS handlers on 6 agent lifecycle events |
 | Python sandbox | Execute Python in-browser via Pyodide |
 | Web Search | Tavily integration with `basic` / `advanced` depth modes |
-| Skills system | Install `.skill` / `.zip` packs, pull from GitHub, or create in-page |
+| Skills system | Install `.skill` / `.zip` packs, pull from GitHub, create in-page, or let AI manage skills with `SkillManager` |
 | Conversation management | Multiple sessions, folders, drag-and-drop, IndexedDB persistence, one-click export |
 | Cloud Sync | Incremental sync to S3-compatible buckets with optional AES-256-GCM encryption |
 ---
@@ -105,6 +109,14 @@ Visit `http://localhost:8000/onepagent.html`, click **Settings** in the top bar 
 
 ---
 
+## Skills
+
+Install skills from the left **Skills** panel via Market, `.skill/.zip`, GitHub, or Create. GitHub folder URLs are supported, e.g. `https://github.com/anthropics/skills/tree/main/skills/skill-creator`.
+
+The agent can also use `SkillManager` to list, install, update, enable/disable, or remove skills; remote installs and destructive/high-risk changes require confirmation.
+
+---
+
 ## Deploy
 
 OnePagent is a pure static site — runs on any static host:
@@ -132,47 +144,68 @@ OnePagent is a pure static site — runs on any static host:
 
 ## Cloud Sync
 
-Back up and sync across devices via any S3-compatible bucket. **No OnePagent server involved.**
+Back up and sync across devices via any S3-compatible bucket. Configure it in **Settings → Cloud Sync**.
 
-- Supports AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO
-- SHA-256 content-addressed, incremental sync, binary dedup
-- Optional AES-256-GCM end-to-end encryption (PBKDF2-SHA256 / 200k iterations)
-- LLM keys are never synced — always device-local
+- Supports AWS S3, Cloudflare R2, Backblaze B2, and MinIO.
+- Required fields: Endpoint, Region, Bucket, Access Key ID, and Secret Access Key.
+- Optional: Prefix, AES-256-GCM encryption passphrase, auto-push, and path-style URLs for MinIO / R2.
+- Use **Test connection** / **Show CORS config** in Settings, then **Sync → Push now / Pull now** from the top bar.
+- LLM keys stay device-local and are never synced.
 
-Setup: **Settings, Cloud Sync** — fill in Endpoint / Region / Bucket / Credentials — Test connection — Push now.
+---
 
-| Backend | Endpoint | Region | Path-style |
-|---|---|---|---|
-| AWS S3 | `https://s3.<region>.amazonaws.com` | real region | recommended |
-| Cloudflare R2 | `https://<account_id>.r2.cloudflarestorage.com` | `auto` | required |
-| MinIO | `https://<your-host>` | custom | required |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | e.g. `us-west-002` | required |
+## Ralph Loop
+
+Ralph Loop keeps the agent working after a normal response ends. Turn on **Ralph**, send a task, and OnePagent will re-enter it until it sees the completion marker or a guard stops the run.
+
+- Configure defaults in **Settings → Ralph Loop**: max iterations, **Unlimited**, and completion marker (default `RALPH_DONE`).
+- Use the top-bar **Stop** button to cancel a run.
+- `AskUser` uses defaults or cancels instead of opening a modal; Plan Mode is never auto-approved.
+
+Example: `Audit this page, fix what you can, and when finished include RALPH_DONE.`
 
 ---
 
 ## Memory
 
-Long-term memory persists across conversations — distinct from context compaction (which compresses the current chat window). This layer stores **reusable facts that survive across sessions**.
+Long-term memory stores reusable facts across conversations. Enable it in **Settings → Memory**.
 
-> **Formula**: Memory = Information + Time Label + Searchable Relationships (tags)
+- Stores `fact` / `preference` / `event` / `skill` / `note` records in IndexedDB.
+- Optional auto-extraction keeps durable facts after assistant turns.
+- Recall uses recency, tags, keywords, and prompt caching.
+- Tools: `memory_save`, `memory_search`, `memory_update`, `memory_forget`.
+- Memory Viewer supports search, filters, JSON import/export, and retired records.
 
-- **Storage**: dedicated IndexedDB (`ba_memories`), included in Cloud Sync incremental push
-- **Off by default**: enable at **Settings → Memory**; auto-extraction can be toggled independently
-- **Five types**: `fact` / `preference` / `event` / `skill` / `note`
-- **Three sources**: `auto` (LLM-extracted) / `tool` (agent-called) / `manual` (user-added)
-- **Auto-extraction**: one lightweight LLM pass after each assistant turn keeps only durable facts; dedicated extraction model supported
-- **Recall**: ranked by **recency + tag overlap + keyword match**, Top-N (configurable, default 8) injected into the system prompt
-- **Agent tools**: `memory_save` / `memory_search` / `memory_update` / `memory_forget`, with `supersedesIds` so new memories retire outdated ones
-- **Memory Viewer**: opens from the top bar — search, filter by type / source, tag chips, JSON import & export, show retired records
-- **Retire, don't delete**: superseded records are kept for history and simply excluded from recall
+---
+
+## Agent Workflow
+
+- **Sub-agents**: the main agent can spawn bounded read-only research workers; runs and previews appear in the side panel.
+- **Human-in-the-loop**: `AskUser` supports text, choices, and confirmations for decisions the model should not guess.
+- **Media tools**: image/video generation is explicit through tools and configured generation models, not automatic after every turn.
+- **Diagnostics**: file-system diagnostics live in **Settings → Diagnostics**.
+
+---
+
+## Agent Swarm
+
+Opt-in parallel multi-agent runtime. Enable in **Settings → Agent Swarm**.
+
+- **Fanout** — lead emits several `SwarmSpawn(role, task)` calls in one turn; they run in parallel up to *Max concurrency*. Built-in roles: researcher, critic, writer, coder.
+- **Handoff** — workers chain via `SwarmHandoff(role, brief)`, e.g. `researcher → critic → writer`. Cycles and depth-overflow rejected.
+- **Blackboard** — per-turn shared workspace: `bb_write` / `bb_read` / `bb_list` / `bb_post_task` / `bb_claim`. Latest entries auto-injected into each worker's prompt.
+- **Custom roles** — manage in the left **Swarms** panel: own system prompt, tool whitelist, handoff targets, budgets. `bindSkills` grants any installed skill's tools. JSON import / export.
+- **RoleManager** *(opt-in)* — lead-only tool that creates / updates / deletes / duplicates roles at runtime. Storage choice: memory, global, or per-conversation. Built-in and user-authored roles are protected.
+
+Guards: per-worker and per-turn token budgets, concurrency cap, Plan Mode inheritance, Ralph Loop mutex, recursion blocked. Hooks `pre_swarm_spawn` / `post_swarm_spawn` join the existing six. Set *Worker model override* (e.g. Haiku) to keep workers cheap while the lead runs on a frontier model.
+
+Best for breadth-first work (research, comparison). Skip for tightly coupled refactors.
 
 ---
 
 ## Configuration
 
-All configuration and conversation data lives in the browser (`localStorage` + `IndexedDB`). Nothing is uploaded to any third-party server.
-
-**Privacy Model**: Browser, Service Worker injects key, your configured API endpoint. OnePagent itself has no server.
+All settings and conversations live in the browser (`localStorage` + `IndexedDB`). OnePagent has no server; requests go from your browser to your configured API endpoint.
 
 ---
 
